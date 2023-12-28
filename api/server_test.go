@@ -5,27 +5,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"go.uber.org/zap"
-	"gotest.tools/assert"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
+	"gotest.tools/assert"
 )
 
 type MockService struct {
 	logger                *zap.Logger
-	RegisterValidatorFunc func(ctx context.Context, payload []byte, clientIP string) (interface{}, any, error)
+	RegisterValidatorFunc func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, any, error)
 	GetHeaderFunc         func(ctx context.Context, clientIP, slot, parentHash, pubKey string) (any, any, error)
 	GetPayloadFunc        func(ctx context.Context, payload []byte, clientIP string) (any, any, error)
 }
 
 var _ IService = (*MockService)(nil)
 
-func (m *MockService) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
+func (m *MockService) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authKey string) (any, any, error) {
 	if m.RegisterValidatorFunc != nil {
-		return m.RegisterValidatorFunc(ctx, payload, clientIP)
+		return m.RegisterValidatorFunc(ctx, payload, clientIP, authKey)
 	}
 	return nil, nil, nil
 }
@@ -54,7 +55,7 @@ func TestServer_HandleRegistration(t *testing.T) {
 			requestBody: []byte(`{"key": "value"}`),
 			mockService: &MockService{
 				logger: zap.NewNop(),
-				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP string) (interface{}, any, error) {
+				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, any, error) {
 					return nil, nil, nil
 
 				},
@@ -66,7 +67,7 @@ func TestServer_HandleRegistration(t *testing.T) {
 			requestBody: []byte(`{"key": "value"}`),
 			mockService: &MockService{
 				logger: zap.NewNop(),
-				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP string) (interface{}, any, error) {
+				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, any, error) {
 					return nil, nil, toErrorResp(http.StatusInternalServerError, "failed to register", "", "failed", "")
 				},
 			},

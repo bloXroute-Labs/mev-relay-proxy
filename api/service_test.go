@@ -63,7 +63,7 @@ func TestService_RegisterValidator(t *testing.T) {
 				logger:  zap.NewNop(),
 				clients: []*Client{{"", &mockRelayClient{RegisterValidatorFunc: tt.f}}},
 			}
-			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "")
+			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", "")
 			if err == nil {
 				assert.Equal(t, got, tt.wantSuccess)
 				return
