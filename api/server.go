@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"net/http"
 	"time"
@@ -34,14 +35,16 @@ type Server struct {
 	svc            IService
 	listenAddress  string
 	getHeaderDelay int
+	tracer         trace.Tracer
 }
 
-func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int) *Server {
+func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, tracer trace.Tracer) *Server {
 	return &Server{
 		logger:         logger,
 		svc:            svc,
 		listenAddress:  listenAddress,
 		getHeaderDelay: getHeaderDelay,
+		tracer:         tracer,
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/otel/trace/noop"
 	"io"
 	"math/big"
 	"net"
@@ -110,6 +111,7 @@ func TestService_getPayload(t *testing.T) {
 			s := &Service{
 				logger:  zap.NewNop(),
 				clients: []*Client{{RelayClient: &mockRelayClient{GetPayloadFunc: tt.f}}},
+				tracer:  noop.NewTracerProvider().Tracer(""),
 			}
 			got, _, err := s.GetPayload(context.Background(), time.Now(), nil, "")
 			if err == nil {
@@ -153,7 +155,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	defer conn.Close()
 
 	relayClient := relaygrpc.NewRelayClient(conn)
-	service := NewService(l, "test", "", &Client{lis.Addr().String(), relayClient})
+	service := NewService(l, noop.NewTracerProvider().Tracer(""), "test", "", &Client{lis.Addr().String(), relayClient})
 
 	go service.StreamHeader(context.Background(), relayClient)
 

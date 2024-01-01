@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/uptrace/uptrace-go/uptrace"
+	"go.opentelemetry.io/otel"
 	"os"
 	"os/signal"
 	"strings"
@@ -35,6 +37,8 @@ var (
 	relaysGRPCURL      = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
 	getHeaderDelayInMS = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
 	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
+	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
+	fluentdDSN         = flag.String("fluentd-dsn", "", "fluentd URL")
 )
 
 func main() {
@@ -60,9 +64,27 @@ func main() {
 			conn.Close()
 		}
 	}()
+
+	// Configure OpenTelemetry with sensible defaults.
+	uptrace.ConfigureOpentelemetry(
+		uptrace.WithDSN(*uptraceDSN),
+
+		uptrace.WithServiceName("mev-boost-relay"),
+		uptrace.WithServiceVersion("1.0.0"),
+		uptrace.WithDeploymentEnvironment(*fluentdDSN),
+	)
+	// Send buffered spans and free resources.
+	defer func() {
+		if err := uptrace.Shutdown(ctx); err != nil {
+			l.Error("failed to shutdown uptrace", zap.Error(err))
+		}
+	}()
+
+	tracer := otel.Tracer("main")
+
 	// init service and server
-	svc := api.NewService(l, _BuildVersion, *nodeID, clients...)
-	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS)
+	svc := api.NewService(l, nil, _BuildVersion, *nodeID, clients...)
+	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer)
 
 	exit := make(chan struct{})
 	go func() {

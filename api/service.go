@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"io"
 	"math/big"
 	"net/http"
@@ -32,6 +34,7 @@ type Service struct {
 	//TODO: add flag to receive node id
 	nodeID string // UUID
 	//slotCleanUpCh chan uint64
+	tracer trace.Tracer
 }
 
 type Client struct {
@@ -45,9 +48,10 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, version string, nodeID string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, clients ...*Client) *Service {
 	return &Service{
 		logger:  logger,
+		tracer:  tracer,
 		version: version,
 		clients: clients,
 		headers: syncmap.NewStringMapOf[[]*Header](),
@@ -59,11 +63,11 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	id := uuid.NewString()
 	s.logger.Info("received",
 		zap.String("method", "registerValidator"),
-		zap.Time("receivedAt", time.Now()),
 		zap.String("clientIP", clientIP),
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
+	span := trace.SpanFromContext(ctx)
 	req := &relaygrpc.RegisterValidatorRequest{
 		ReqId:      id,
 		Payload:    payload,
@@ -77,8 +81,15 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		err error
 		out *relaygrpc.RegisterValidatorResponse
 	)
+	span.SetAttributes(
+		attribute.String("method", "registerValidator"),
+		attribute.String("clientIP", clientIP),
+		attribute.String("reqID", id),
+		attribute.Int64("receivedAt", receivedAt.Unix()),
+	)
+	spanCtx := trace.ContextWithSpan(ctx, span)
 	for _, client := range s.clients {
-		out, err = client.RegisterValidator(ctx, req)
+		out, err = client.RegisterValidator(spanCtx, req)
 		if err != nil {
 			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
 			continue
@@ -179,13 +190,27 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
 	k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", slot, parentHash, pubKey)
 	id := uuid.NewString()
+	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
 		zap.String("method", "getHeader"),
-		zap.Time("receivedAt", time.Now()),
+		zap.Time("receivedAt", receivedAt),
 		zap.String("clientIP", clientIP),
 		zap.String("key", k),
 		zap.String("reqID", id),
 	)
+	parentSpan.SetAttributes(
+		attribute.String("method", "getHeader"),
+		attribute.String("clientIP", clientIP),
+		attribute.String("reqID", id),
+		attribute.Int64("receivedAt", receivedAt.Unix()),
+		attribute.String("key", k),
+		attribute.String("reqID", id),
+	)
+
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span := s.tracer.Start(parentSpanCtx, "getHeader")
+	defer span.End()
+
 	defer func() {
 		go func() {
 			// cleanup old slots/headers
@@ -217,13 +242,25 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
 	id := uuid.NewString()
+	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
 		zap.String("method", "getPayload"),
-		zap.Time("receivedAt", time.Now()),
 		zap.String("clientIP", clientIP),
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
+	parentSpan.SetAttributes(
+		attribute.String("method", "getPayload"),
+		attribute.String("clientIP", clientIP),
+		attribute.String("reqID", id),
+		attribute.Int64("receivedAt", receivedAt.Unix()),
+		attribute.String("reqID", id),
+	)
+
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	spanCtx, span := s.tracer.Start(parentSpanCtx, "getPayload")
+	defer span.End()
+
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:      id,
 		Payload:    payload,
@@ -237,7 +274,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		meta string
 	)
 	for _, client := range s.clients {
-		out, err = client.GetPayload(ctx, req)
+		out, err = client.GetPayload(spanCtx, req)
 		if err != nil {
 			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
 			continue
