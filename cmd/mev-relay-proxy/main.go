@@ -69,7 +69,7 @@ func main() {
 	uptrace.ConfigureOpentelemetry(
 		uptrace.WithDSN(*uptraceDSN),
 
-		uptrace.WithServiceName("mev-boost-relay"),
+		uptrace.WithServiceName("mev-relay-proxy"),
 		uptrace.WithServiceVersion("1.0.0"),
 		uptrace.WithDeploymentEnvironment(*fluentdDSN),
 	)
