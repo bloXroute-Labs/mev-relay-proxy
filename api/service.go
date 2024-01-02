@@ -59,7 +59,6 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	id := uuid.NewString()
 	s.logger.Info("received",
 		zap.String("method", "registerValidator"),
-		zap.Time("receivedAt", time.Now()),
 		zap.String("clientIP", clientIP),
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
@@ -181,7 +180,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	id := uuid.NewString()
 	s.logger.Info("received",
 		zap.String("method", "getHeader"),
-		zap.Time("receivedAt", time.Now()),
+		zap.Time("receivedAt", receivedAt),
 		zap.String("clientIP", clientIP),
 		zap.String("key", k),
 		zap.String("reqID", id),
@@ -219,7 +218,6 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	id := uuid.NewString()
 	s.logger.Info("received",
 		zap.String("method", "getPayload"),
-		zap.Time("receivedAt", time.Now()),
 		zap.String("clientIP", clientIP),
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
