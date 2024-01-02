@@ -1,6 +1,6 @@
 VERSION := $(shell git describe --tags --always)
 REPO := mev-relay-proxy
-DOCKER_REPO :=
+DOCKER_REPO :=bloxroute/${REPO}
 MAIN_FILE := ./cmd/mev-relay-proxy
 .PHONY: all
 all: build
