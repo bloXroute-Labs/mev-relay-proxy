@@ -69,9 +69,9 @@ func main() {
 	uptrace.ConfigureOpentelemetry(
 		uptrace.WithDSN(*uptraceDSN),
 
-		uptrace.WithServiceName("mev-relay-proxy"),
-		uptrace.WithServiceVersion("1.0.0"),
-		uptrace.WithDeploymentEnvironment(*fluentdDSN),
+		uptrace.WithServiceName(_AppName),
+		uptrace.WithServiceVersion(_BuildVersion),
+		uptrace.WithDeploymentEnvironment(*nodeID),
 	)
 	// Send buffered spans and free resources.
 	defer func() {
