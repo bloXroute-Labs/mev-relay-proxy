@@ -38,7 +38,6 @@ var (
 	getHeaderDelayInMS = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
 	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
 	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
-	fluentdDSN         = flag.String("fluentd-dsn", "", "fluentd URL")
 )
 
 func main() {
@@ -83,7 +82,7 @@ func main() {
 	tracer := otel.Tracer("main")
 
 	// init service and server
-	svc := api.NewService(l, nil, _BuildVersion, *nodeID, clients...)
+	svc := api.NewService(l, tracer, _BuildVersion, *nodeID, clients...)
 	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer)
 
 	exit := make(chan struct{})
