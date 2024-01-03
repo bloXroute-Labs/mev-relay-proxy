@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	grpcConnKeepAlivePingInterval = 10 * time.Second
+	grpcConnKeepAlivePingInterval = 30 * time.Second
 	grpcConnKeepAlivePingTimeout  = time.Second
 )
 
@@ -56,7 +56,7 @@ func main() {
 		conns   []*grpc.ClientConn
 	)
 	urls := strings.Split(*relaysGRPCURL, ",")
-	var keepAliveArgs = keepalive.ClientParameters{Time: grpcConnKeepAlivePingInterval, Timeout: grpcConnKeepAlivePingInterval}
+	var keepAliveArgs = keepalive.ClientParameters{Time: grpcConnKeepAlivePingInterval, Timeout: grpcConnKeepAlivePingTimeout}
 	for _, url := range urls {
 		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithKeepaliveParams(keepAliveArgs))
 		if err != nil {
