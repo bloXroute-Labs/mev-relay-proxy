@@ -51,7 +51,7 @@ func main() {
 		conns   []*grpc.ClientConn
 	)
 	urls := strings.Split(*relaysGRPCURL, ",")
-	var keepAliveArgs = keepalive.ClientParameters{PermitWithoutStream: true}
+	var keepAliveArgs = keepalive.ClientParameters{Time: 30 * time.Second, PermitWithoutStream: true}
 	for _, url := range urls {
 		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithKeepaliveParams(keepAliveArgs))
 		if err != nil {
