@@ -25,6 +25,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+const (
+	grpcConnKeepAlivePingInterval = 10 * time.Second
+	grpcConnKeepAlivePingTimeout  = time.Second
+)
+
 var (
 	// Included in the build process
 	_BuildVersion string
@@ -51,7 +56,7 @@ func main() {
 		conns   []*grpc.ClientConn
 	)
 	urls := strings.Split(*relaysGRPCURL, ",")
-	var keepAliveArgs = keepalive.ClientParameters{Time: 30 * time.Second, PermitWithoutStream: true}
+	var keepAliveArgs = keepalive.ClientParameters{Time: grpcConnKeepAlivePingInterval, Timeout: grpcConnKeepAlivePingInterval}
 	for _, url := range urls {
 		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithKeepaliveParams(keepAliveArgs))
 		if err != nil {
