@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
-	"google.golang.org/grpc/keepalive"
 	"os"
 	"os/signal"
 	"strings"
@@ -50,15 +49,15 @@ func main() {
 		clients []*api.Client
 		conns   []*grpc.ClientConn
 	)
-	keepAliveParams := keepalive.ClientParameters{
-		Time:                20 * time.Second,
-		Timeout:             30 * time.Second,
-		PermitWithoutStream: false,
-	}
-
+	//keepAliveParams := keepalive.ClientParameters{
+	//	Time:                20 * time.Second,
+	//	Timeout:             30 * time.Second,
+	//	PermitWithoutStream: false,
+	//}
+	//
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
-		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithKeepaliveParams(keepAliveParams))
+		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
 		}
@@ -107,7 +106,7 @@ func main() {
 	go func(_ctx context.Context) {
 		wg := new(sync.WaitGroup)
 		svc.WrapStreamHeaders(_ctx, wg)
-	}(ctx)
+	}(context.Background())
 	if err := server.Start(); err != nil {
 		l.Fatal("failed to start mev-relay-proxy server", zap.Error(err))
 	}
