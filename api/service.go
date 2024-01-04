@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	"io"
 	"math/big"
 	"net/http"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -159,6 +160,11 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 		if err != nil {
 			s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", nodeID))
 			break
+		}
+
+		if header.BlockHash == "" {
+			s.logger.Info("received empty blockHash", zap.String("nodeID", nodeID))
+			continue
 		}
 		k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", header.GetSlot(), header.GetParentHash(), header.GetPubkey())
 		s.logger.Info("received header",
