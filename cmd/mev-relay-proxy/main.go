@@ -50,10 +50,15 @@ func main() {
 		clients []*api.Client
 		conns   []*grpc.ClientConn
 	)
-	var kp = keepalive.ClientParameters{PermitWithoutStream: true, Timeout: 20 * time.Second}
+	keepAliveParams := keepalive.ClientParameters{
+		Time:                20 * time.Second,
+		Timeout:             30 * time.Second,
+		PermitWithoutStream: false,
+	}
+
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
-		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithKeepaliveParams(kp))
+		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithKeepaliveParams(keepAliveParams))
 		if err != nil {
 			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
 		}
