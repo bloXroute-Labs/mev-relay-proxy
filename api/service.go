@@ -132,6 +132,7 @@ func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
 func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient) (*relaygrpc.StreamHeaderResponse, error) {
 	id := uuid.NewString()
 	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:   id,
 		NodeId:  nodeID,
