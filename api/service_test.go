@@ -153,7 +153,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	defer conn.Close()
 
 	relayClient := relaygrpc.NewRelayClient(conn)
-	service := NewService(l, "test", "", &Client{lis.Addr().String(), relayClient})
+	service := NewService(l, "test", "", "", &Client{lis.Addr().String(), relayClient})
 
 	go service.StreamHeader(context.Background(), relayClient)
 
