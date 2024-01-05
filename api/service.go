@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/metadata"
 	"io"
 	"math/big"
 	"net/http"
@@ -32,6 +33,7 @@ type Service struct {
 	//TODO: add flag to receive node id
 	nodeID string // UUID
 	//slotCleanUpCh chan uint64
+	authKey string
 }
 
 type Client struct {
@@ -45,13 +47,14 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, version string, nodeID string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, version string, nodeID string, authKey string, clients ...*Client) *Service {
 	return &Service{
 		logger:  logger,
 		version: version,
 		clients: clients,
 		headers: syncmap.NewStringMapOf[[]*Header](),
 		nodeID:  nodeID,
+		authKey: authKey,
 	}
 }
 
@@ -63,6 +66,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	req := &relaygrpc.RegisterValidatorRequest{
 		ReqId:      id,
 		Payload:    payload,
@@ -222,6 +226,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:      id,
 		Payload:    payload,

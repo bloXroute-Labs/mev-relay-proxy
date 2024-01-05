@@ -35,6 +35,7 @@ var (
 	relaysGRPCURL      = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
 	getHeaderDelayInMS = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
 	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
+	authKey            = flag.String("auth-key", "", "account authentication key")
 )
 
 func main() {
@@ -61,7 +62,7 @@ func main() {
 		}
 	}()
 	// init service and server
-	svc := api.NewService(l, _BuildVersion, *nodeID, clients...)
+	svc := api.NewService(l, _BuildVersion, *nodeID, *authKey, clients...)
 	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS)
 
 	exit := make(chan struct{})
