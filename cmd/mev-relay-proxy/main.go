@@ -28,6 +28,7 @@ var (
 	// Included in the build process
 	_BuildVersion string
 	_AppName      = "mev-relay-proxy"
+	_SecretToken  string
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
 
@@ -49,12 +50,6 @@ func main() {
 		clients []*api.Client
 		conns   []*grpc.ClientConn
 	)
-	//keepAliveParams := keepalive.ClientParameters{
-	//	Time:                20 * time.Second,
-	//	Timeout:             30 * time.Second,
-	//	PermitWithoutStream: false,
-	//}
-	//
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
 		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
