@@ -68,7 +68,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
-	span := trace.SpanFromContext(ctx)
+	parentSpan := trace.SpanFromContext(ctx)
 	req := &relaygrpc.RegisterValidatorRequest{
 		ReqId:      id,
 		Payload:    payload,
@@ -82,13 +82,14 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		err error
 		out *relaygrpc.RegisterValidatorResponse
 	)
-	span.SetAttributes(
+	parentSpan.SetAttributes(
 		attribute.String("method", "registerValidator"),
 		attribute.String("clientIP", clientIP),
 		attribute.String("reqID", id),
 		attribute.Int64("receivedAt", receivedAt.Unix()),
 	)
-	spanCtx := trace.ContextWithSpan(ctx, span)
+	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
+
 	for _, client := range s.clients {
 		out, err = client.RegisterValidator(spanCtx, req)
 		if err != nil {
@@ -141,12 +142,25 @@ func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
 func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient) (*relaygrpc.StreamHeaderResponse, error) {
 	id := uuid.NewString()
 	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
+
+	parentSpan := trace.SpanFromContext(ctx)
+
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:   id,
 		NodeId:  nodeID,
 		Version: s.version,
 	})
 	s.logger.Info("streaming headers", zap.String("nodeID", nodeID))
+	parentSpan.SetAttributes(
+		attribute.String("method", "streamHeader"),
+		attribute.String("nodeID", nodeID),
+		attribute.String("reqID", id),
+	)
+
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span := s.tracer.Start(parentSpanCtx, "streamHeader")
+	defer span.End()
+
 	if err != nil {
 		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", nodeID))
 		return nil, err

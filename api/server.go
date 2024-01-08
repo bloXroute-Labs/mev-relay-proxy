@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"go.opentelemetry.io/otel/trace"
 	"io"
 	"net/http"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/go-chi/chi/v5"
 
@@ -97,10 +98,12 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := r.Header.Get("authorization")
 	bodyBytes, err := io.ReadAll(r.Body)
+
 	if err != nil {
 		respondError(registration, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "could not read registration", ""), s.logger, nil)
 		return
 	}
+
 	out, metaData, err := s.svc.RegisterValidator(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
 	if err != nil {
 		respondError(registration, w, err, s.logger, metaData)

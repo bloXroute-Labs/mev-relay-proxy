@@ -21,6 +21,10 @@ test:
 test-race:
 	go test -race ./...
 
+.PHONY: fmt
+fmt:
+	gofmt -s -w .
+
 .PHONY: lint
 lint:
 	go vet ./...
