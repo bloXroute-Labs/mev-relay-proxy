@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/metadata"
 	"io"
 	"math/big"
 	"net/http"
 	"sync"
 	"time"
+
+	"google.golang.org/grpc/metadata"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -66,7 +67,9 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	if s.authKey != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	}
 	req := &relaygrpc.RegisterValidatorRequest{
 		ReqId:      id,
 		Payload:    payload,
@@ -132,7 +135,9 @@ func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
 func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient) (*relaygrpc.StreamHeaderResponse, error) {
 	id := uuid.NewString()
 	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	if s.authKey != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	}
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:   id,
 		NodeId:  nodeID,
@@ -234,7 +239,9 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	if s.authKey != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	}
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:      id,
 		Payload:    payload,
