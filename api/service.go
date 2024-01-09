@@ -123,6 +123,14 @@ func (s *Service) WrapStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
+	parentSpan := trace.SpanFromContext(ctx)
+	parentSpan.SetAttributes(
+		attribute.String("method", "streamHeader"),
+		attribute.String("url", client.URL),
+	)
+	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
+	_, span := s.tracer.Start(spanCtx, "streamHeader")
+	defer span.End()
 	for {
 		select {
 		case <-ctx.Done():
