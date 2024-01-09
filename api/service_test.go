@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go.opentelemetry.io/otel/trace/noop"
 	"io"
 	"math/big"
 	"net"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/attestantio/go-builder-client/spec"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
@@ -155,8 +156,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	defer conn.Close()
 
 	relayClient := relaygrpc.NewRelayClient(conn)
-	service := NewService(l, noop.NewTracerProvider().Tracer(""), "test", "", &Client{lis.Addr().String(), relayClient})
-
+	service := NewService(l, noop.NewTracerProvider().Tracer(""), "test", "", "", &Client{lis.Addr().String(), relayClient})
 
 	go service.StreamHeader(context.Background(), relayClient)
 

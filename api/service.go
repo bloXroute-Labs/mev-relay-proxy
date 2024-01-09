@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/metadata"
 	"io"
 	"math/big"
 	"net/http"
@@ -21,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 )
 
 type IService interface {
@@ -36,8 +36,8 @@ type Service struct {
 	//TODO: add flag to receive node id
 	nodeID string // UUID
 	//slotCleanUpCh chan uint64
-	tracer trace.Tracer
-
+	authKey string
+	tracer  trace.Tracer
 }
 
 type Client struct {
@@ -51,8 +51,7 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, clients ...*Client) *Service {
-
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, clients ...*Client) *Service {
 	return &Service{
 		logger:  logger,
 		tracer:  tracer,
@@ -72,8 +71,8 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	parentSpan := trace.SpanFromContext(ctx)
-
 	req := &relaygrpc.RegisterValidatorRequest{
 		ReqId:      id,
 		Payload:    payload,
@@ -136,6 +135,7 @@ func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
 	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
 	_, span := s.tracer.Start(spanCtx, "streamHeader")
 	defer span.End()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -156,8 +156,9 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 	id := uuid.NewString()
 	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
 
-	parentSpan := trace.SpanFromContext(ctx)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 
+	parentSpan := trace.SpanFromContext(ctx)
 
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:   id,
@@ -290,11 +291,11 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		attribute.Int64("receivedAt", receivedAt.Unix()),
 		attribute.String("reqID", id),
 	)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 
-	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	parentSpanCtx := trace.ContextWithSpan(ctx, parentSpan)
 	spanCtx, span := s.tracer.Start(parentSpanCtx, "getPayload")
 	defer span.End()
-
 
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:      id,
