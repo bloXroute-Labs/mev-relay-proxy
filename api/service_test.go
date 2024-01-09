@@ -157,6 +157,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	relayClient := relaygrpc.NewRelayClient(conn)
 	service := NewService(l, noop.NewTracerProvider().Tracer(""), "test", "", &Client{lis.Addr().String(), relayClient})
 
+
 	go service.StreamHeader(context.Background(), relayClient)
 
 	server := &Server{svc: service, logger: zap.NewNop(), listenAddress: "127.0.0.1:9090"}

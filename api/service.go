@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc/metadata"
 	"io"
 	"math/big"
 	"net/http"
@@ -36,6 +37,7 @@ type Service struct {
 	nodeID string // UUID
 	//slotCleanUpCh chan uint64
 	tracer trace.Tracer
+
 }
 
 type Client struct {
@@ -50,6 +52,7 @@ type Header struct {
 }
 
 func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, clients ...*Client) *Service {
+
 	return &Service{
 		logger:  logger,
 		tracer:  tracer,
@@ -57,6 +60,7 @@ func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID 
 		clients: clients,
 		headers: syncmap.NewStringMapOf[[]*Header](),
 		nodeID:  nodeID,
+		authKey: authKey,
 	}
 }
 
@@ -69,6 +73,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.Time("receivedAt", receivedAt),
 	)
 	parentSpan := trace.SpanFromContext(ctx)
+
 	req := &relaygrpc.RegisterValidatorRequest{
 		ReqId:      id,
 		Payload:    payload,
@@ -152,6 +157,7 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
 
 	parentSpan := trace.SpanFromContext(ctx)
+
 
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:   id,
@@ -288,6 +294,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
 	spanCtx, span := s.tracer.Start(parentSpanCtx, "getPayload")
 	defer span.End()
+
 
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:      id,
