@@ -256,6 +256,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		}()
 	}()
 
+	_, spanStoringHeader := s.tracer.Start(parentSpanCtx, "storing header")
 	val := new(big.Int)
 	index := 0
 	//TODO: currently storing all the header values for the particular slot
@@ -272,6 +273,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
+	spanStoringHeader.End()
 	return nil, k, toErrorResp(http.StatusNoContent, "", id, fmt.Sprintf("header value is not present for the requested key %v", k), clientIP)
 }
 
