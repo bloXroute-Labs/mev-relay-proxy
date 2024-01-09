@@ -140,21 +140,28 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 	})
 	s.logger.Info("streaming headers", zap.String("nodeID", nodeID))
 	if err != nil {
-		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", nodeID))
+		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id))
 		return nil, err
 	}
 	for {
 		header, err := stream.Recv()
 		if err == io.EOF {
-			s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", nodeID))
+			s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id))
 			break
 		}
 		if err != nil {
-			s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", nodeID))
+			s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id))
 			break
+		}
+		// Added empty streaming as a temporary workaround to maintain streaming alive
+		// TODO: this need to be handled by adding settings for keep alive params on both server and client
+		if header.GetBlockHash() == "" {
+			s.logger.Debug("received empty stream", zap.String("nodeID", nodeID))
+			continue
 		}
 		k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", header.GetSlot(), header.GetParentHash(), header.GetPubkey())
 		s.logger.Info("received header",
+			zap.String("reqID", id),
 			zap.Uint64("slot", header.GetSlot()),
 			zap.String("parentHash", header.GetParentHash()),
 			zap.String("blockHash", header.GetBlockHash()),
@@ -176,7 +183,7 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 		h = append(h, v)
 		s.headers.Store(k, h)
 	}
-	s.logger.Warn("closing connection", zap.String("nodeID", nodeID))
+	s.logger.Warn("closing connection", zap.String("nodeID", nodeID), zap.String("reqID", id))
 	return nil, nil
 }
 
