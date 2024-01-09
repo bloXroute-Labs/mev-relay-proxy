@@ -49,10 +49,10 @@ func (s *Server) Start() error {
 	s.server = &http.Server{
 		Addr:              s.listenAddress,
 		Handler:           s.InitHandler(),
-		ReadTimeout:       1500 * time.Millisecond,
-		ReadHeaderTimeout: 600 * time.Millisecond,
-		WriteTimeout:      3 * time.Second,
-		IdleTimeout:       3 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		ReadHeaderTimeout: 6 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 	err := s.server.ListenAndServe()
 	if err == http.ErrServerClosed {
