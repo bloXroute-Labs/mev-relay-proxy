@@ -29,7 +29,7 @@ var (
 	// Included in the build process
 	_BuildVersion string
 	_AppName      = "mev-relay-proxy"
-	_SecretToken  string
+	_SecretToken  string //lint:ignore U1000 Ignore unused variable
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
 
