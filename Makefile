@@ -33,7 +33,7 @@ lint:
 
 .PHONY: build-for-docker
 build-for-docker:
-	GOOS=linux go build -ldflags "-X main._BuildVersion=${VERSION}"  -v -o ${APP} ${MAIN_FILE}
+	GOOS=linux GOARCH=amd64 go build -ldflags "-X main._BuildVersion=${VERSION}"  -v -o ${APP} ${MAIN_FILE}
 
 .PHONY: docker-image
 docker-image:
