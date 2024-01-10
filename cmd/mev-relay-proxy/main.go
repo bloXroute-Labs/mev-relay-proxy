@@ -40,7 +40,7 @@ var (
 	getHeaderDelayInMS = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
 	authKey            = flag.String("auth-key", "", "account authentication key")
 	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
-	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
+	uptraceDSN         = flag.String("uptrace-dsn", "http://project2_secret_token@54.83.122.129:14317/2", "uptrace URL")
 )
 
 func main() {
