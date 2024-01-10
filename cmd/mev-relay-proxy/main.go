@@ -28,7 +28,7 @@ import (
 var (
 	// Included in the build process
 	_BuildVersion string
-	_AppName      = "mev-relay-proxy"
+	_AppName      = "mev-relay-proxy-internal"
 	_SecretToken  string
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
