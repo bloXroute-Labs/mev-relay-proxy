@@ -1,6 +1,7 @@
 VERSION := $(shell git describe --tags --always)
 APP := mev-relay-proxy
-DOCKER_REPO :=
+REPO := bloxroute/mev-relay-proxy-internal
+DOCKER_REPO := bloxroute/mev-relay-proxy-internal
 MAIN_FILE := ./cmd/${APP}
 .PHONY: all
 all: build
