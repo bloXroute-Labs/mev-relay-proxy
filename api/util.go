@@ -5,6 +5,26 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/bloXroute-Labs/mev-relay-proxy/stats"
+	"github.com/urfave/cli/v2"
+)
+
+var (
+	FluentdHostFlag = &cli.StringFlag{
+		Name:    "fluentd-host",
+		Usage:   "fluentd host",
+		Aliases: []string{"fh"},
+		Value:   "172.17.0.1",
+		Hidden:  true,
+	}
+	FluentdFlag = &cli.BoolFlag{
+		Name:   "fluentd",
+		Usage:  "sends logs records to fluentD",
+		Value:  true,
+		Hidden: true,
+	}
 )
 
 // decodeJSON reads JSON from io.Reader and decodes it into a struct
@@ -29,13 +49,29 @@ func decodeJSONAndClose(r io.ReadCloser, dst any) error {
 	return decodeJSON(r, dst)
 }
 
-func GetIPXForwardedFor(r *http.Request) string {
+func GetIPXForwardedFor(r *http.Request, fluentDStats stats.Stats) string {
 	forwarded := r.Header.Get("X-Forwarded-For")
 	if forwarded != "" {
 		if strings.Contains(forwarded, ",") { // return first entry of list of IPs
-			return strings.Split(forwarded, ",")[0]
+			ip := strings.Split(forwarded, ",")[0]
+			// Log to FluentD
+			fluentDStats.LogToFluentD(stats.Record{
+				Type: "IPForwarded",
+				Data: ip,
+			}, time.Now(), "utils.GetIPXForwardedFor")
+			return ip
 		}
+		// Log to FluentD
+		fluentDStats.LogToFluentD(stats.Record{
+			Type: "IPForwarded",
+			Data: forwarded,
+		}, time.Now(), "utils.GetIPXForwardedFor")
 		return forwarded
 	}
+	// Log to FluentD
+	fluentDStats.LogToFluentD(stats.Record{
+		Type: "IPForwarded",
+		Data: r.RemoteAddr,
+	}, time.Now(), "utils.GetIPXForwardedFor")
 	return r.RemoteAddr
 }

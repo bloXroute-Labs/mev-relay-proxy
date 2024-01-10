@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/bloXroute-Labs/mev-relay-proxy/stats"
 	"github.com/go-chi/chi/v5"
 
 	"go.uber.org/zap"
@@ -34,14 +35,16 @@ type Server struct {
 	svc            IService
 	listenAddress  string
 	getHeaderDelay int
+	fluentd        stats.Stats
 }
 
-func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int) *Server {
+func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, fluentd stats.Stats) *Server {
 	return &Server{
 		logger:         logger,
 		svc:            svc,
 		listenAddress:  listenAddress,
 		getHeaderDelay: getHeaderDelay,
+		fluentd:        fluentd,
 	}
 }
 
@@ -91,7 +94,7 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 
 func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
-	clientIP := GetIPXForwardedFor(r)
+	clientIP := GetIPXForwardedFor(r, s.fluentd)
 	authHeader := r.Header.Get("authorization")
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -111,7 +114,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	slot := chi.URLParam(r, "slot")
 	parentHash := chi.URLParam(r, "parent_hash")
 	pubKey := chi.URLParam(r, "pubkey")
-	clientIP := GetIPXForwardedFor(r)
+	clientIP := GetIPXForwardedFor(r, s.fluentd)
 	<-time.After(time.Millisecond * time.Duration(s.getHeaderDelay))
 	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey)
 	if err != nil {
@@ -123,7 +126,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
-	clientIP := GetIPXForwardedFor(r)
+	clientIP := GetIPXForwardedFor(r, s.fluentd)
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {

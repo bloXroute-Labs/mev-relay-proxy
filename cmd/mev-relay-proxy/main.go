@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/bloXroute-Labs/mev-relay-proxy/api"
+	"github.com/bloXroute-Labs/mev-relay-proxy/stats"
 	"github.com/google/uuid"
 
 	"time"
@@ -36,6 +37,7 @@ var (
 	getHeaderDelayInMS = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
 	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
 	authKey            = flag.String("auth-key", "", "account authentication key")
+	fluentD            = flag.String("fluentd", "", "fluentd host:port")
 )
 
 func main() {
@@ -61,9 +63,13 @@ func main() {
 			conn.Close()
 		}
 	}()
+
+	// init fluentd
+	fluentDStats := stats.NewStats(*fluentD != "", *fluentD)
+
 	// init service and server
-	svc := api.NewService(l, _BuildVersion, *nodeID, *authKey, clients...)
-	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS)
+	svc := api.NewService(l, _BuildVersion, *nodeID, *authKey, fluentDStats, clients...)
+	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, stats.NewStats(*fluentD != "", *fluentD))
 
 	exit := make(chan struct{})
 	go func() {

@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/metadata"
 	"io"
 	"math/big"
 	"net/http"
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/metadata"
+
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bloXroute-Labs/gateway/v2/utils/syncmap"
+	"github.com/bloXroute-Labs/mev-relay-proxy/stats"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -34,6 +36,8 @@ type Service struct {
 	nodeID string // UUID
 	//slotCleanUpCh chan uint64
 	authKey string
+	// FluentD
+	fluentD stats.Stats
 }
 
 type Client struct {
@@ -47,7 +51,7 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, version string, nodeID string, authKey string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, version string, nodeID string, authKey string, fluentD stats.Stats, clients ...*Client) *Service {
 	return &Service{
 		logger:  logger,
 		version: version,
@@ -55,6 +59,7 @@ func NewService(logger *zap.Logger, version string, nodeID string, authKey strin
 		headers: syncmap.NewStringMapOf[[]*Header](),
 		nodeID:  nodeID,
 		authKey: authKey,
+		fluentD: fluentD,
 	}
 }
 

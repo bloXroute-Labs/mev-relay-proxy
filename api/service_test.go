@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/attestantio/go-builder-client/spec"
+	"github.com/bloXroute-Labs/mev-relay-proxy/stats"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -62,6 +63,7 @@ func TestService_RegisterValidator(t *testing.T) {
 			s := &Service{
 				logger:  zap.NewNop(),
 				clients: []*Client{{"", &mockRelayClient{RegisterValidatorFunc: tt.f}}},
+				fluentD: stats.NewStats(false, ""),
 			}
 			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", "")
 			if err == nil {
@@ -153,7 +155,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	defer conn.Close()
 
 	relayClient := relaygrpc.NewRelayClient(conn)
-	service := NewService(l, "test", "", "", &Client{lis.Addr().String(), relayClient})
+	service := NewService(l, "test", "", "", stats.NewStats(false, ""), &Client{lis.Addr().String(), relayClient})
 
 	go service.StreamHeader(context.Background(), relayClient)
 
