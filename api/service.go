@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc/metadata"
 	"io"
 	"math/big"
 	"net/http"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 )
 
 type IService interface {
@@ -34,6 +37,7 @@ type Service struct {
 	nodeID string // UUID
 	//slotCleanUpCh chan uint64
 	authKey string
+	tracer  trace.Tracer
 }
 
 type Client struct {
@@ -47,9 +51,10 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, version string, nodeID string, authKey string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, clients ...*Client) *Service {
 	return &Service{
 		logger:  logger,
+		tracer:  tracer,
 		version: version,
 		clients: clients,
 		headers: syncmap.NewStringMapOf[[]*Header](),
@@ -62,12 +67,12 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	id := uuid.NewString()
 	s.logger.Info("received",
 		zap.String("method", "registerValidator"),
-		zap.Time("receivedAt", time.Now()),
 		zap.String("clientIP", clientIP),
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	parentSpan := trace.SpanFromContext(ctx)
 	req := &relaygrpc.RegisterValidatorRequest{
 		ReqId:      id,
 		Payload:    payload,
@@ -81,8 +86,16 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		err error
 		out *relaygrpc.RegisterValidatorResponse
 	)
+	parentSpan.SetAttributes(
+		attribute.String("method", "registerValidator"),
+		attribute.String("clientIP", clientIP),
+		attribute.String("reqID", id),
+		attribute.Int64("receivedAt", receivedAt.Unix()),
+	)
+	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
+
 	for _, client := range s.clients {
-		out, err = client.RegisterValidator(ctx, req)
+		out, err = client.RegisterValidator(spanCtx, req)
 		if err != nil {
 			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
 			continue
@@ -114,6 +127,15 @@ func (s *Service) WrapStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
+	parentSpan := trace.SpanFromContext(ctx)
+	parentSpan.SetAttributes(
+		attribute.String("method", "streamHeader"),
+		attribute.String("url", client.URL),
+	)
+	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
+	_, span := s.tracer.Start(spanCtx, "streamHeader")
+	defer span.End()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -133,13 +155,27 @@ func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
 func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient) (*relaygrpc.StreamHeaderResponse, error) {
 	id := uuid.NewString()
 	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
+
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+
+	parentSpan := trace.SpanFromContext(ctx)
+
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:   id,
 		NodeId:  nodeID,
 		Version: s.version,
 	})
 	s.logger.Info("streaming headers", zap.String("nodeID", nodeID))
+	parentSpan.SetAttributes(
+		attribute.String("method", "streamHeader"),
+		attribute.String("nodeID", nodeID),
+		attribute.String("reqID", id),
+	)
+
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span := s.tracer.Start(parentSpanCtx, "streamHeader")
+	defer span.End()
+
 	if err != nil {
 		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", nodeID))
 		return nil, err
@@ -153,6 +189,11 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 		if err != nil {
 			s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", nodeID))
 			break
+		}
+
+		if header.BlockHash == "" {
+			s.logger.Info("received empty blockHash", zap.String("nodeID", nodeID))
+			continue
 		}
 		k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", header.GetSlot(), header.GetParentHash(), header.GetPubkey())
 		s.logger.Info("received header",
@@ -184,13 +225,27 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
 	k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", slot, parentHash, pubKey)
 	id := uuid.NewString()
+	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
 		zap.String("method", "getHeader"),
-		zap.Time("receivedAt", time.Now()),
+		zap.Time("receivedAt", receivedAt),
 		zap.String("clientIP", clientIP),
 		zap.String("key", k),
 		zap.String("reqID", id),
 	)
+	parentSpan.SetAttributes(
+		attribute.String("method", "getHeader"),
+		attribute.String("clientIP", clientIP),
+		attribute.String("reqID", id),
+		attribute.Int64("receivedAt", receivedAt.Unix()),
+		attribute.String("key", k),
+		attribute.String("reqID", id),
+	)
+
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span := s.tracer.Start(parentSpanCtx, "getHeader")
+	defer span.End()
+
 	defer func() {
 		go func() {
 			// cleanup old slots/headers
@@ -201,6 +256,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		}()
 	}()
 
+	_, spanStoringHeader := s.tracer.Start(parentSpanCtx, "storing header")
 	val := new(big.Int)
 	index := 0
 	//TODO: currently storing all the header values for the particular slot
@@ -217,19 +273,32 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
+	spanStoringHeader.End()
 	return nil, k, toErrorResp(http.StatusNoContent, "", id, fmt.Sprintf("header value is not present for the requested key %v", k), clientIP)
 }
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
 	id := uuid.NewString()
+	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
 		zap.String("method", "getPayload"),
-		zap.Time("receivedAt", time.Now()),
 		zap.String("clientIP", clientIP),
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
+	parentSpan.SetAttributes(
+		attribute.String("method", "getPayload"),
+		attribute.String("clientIP", clientIP),
+		attribute.String("reqID", id),
+		attribute.Int64("receivedAt", receivedAt.Unix()),
+		attribute.String("reqID", id),
+	)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+
+	parentSpanCtx := trace.ContextWithSpan(ctx, parentSpan)
+	spanCtx, span := s.tracer.Start(parentSpanCtx, "getPayload")
+	defer span.End()
+
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:      id,
 		Payload:    payload,
@@ -243,7 +312,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		meta string
 	)
 	for _, client := range s.clients {
-		out, err = client.GetPayload(ctx, req)
+		out, err = client.GetPayload(spanCtx, req)
 		if err != nil {
 			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
 			continue

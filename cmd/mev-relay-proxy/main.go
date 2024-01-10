@@ -10,6 +10,9 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/uptrace/uptrace-go/uptrace"
+	"go.opentelemetry.io/otel"
+
 	"github.com/bloXroute-Labs/mev-relay-proxy/api"
 	"github.com/google/uuid"
 
@@ -26,6 +29,7 @@ var (
 	// Included in the build process
 	_BuildVersion string
 	_AppName      = "mev-relay-proxy"
+	_SecretToken  string
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
 
@@ -34,8 +38,9 @@ var (
 	relayGRPCURL       = flag.String("relay", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "relay grpc URL")
 	relaysGRPCURL      = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
 	getHeaderDelayInMS = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
-	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
 	authKey            = flag.String("auth-key", "", "account authentication key")
+	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
+	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
 )
 
 func main() {
@@ -61,9 +66,29 @@ func main() {
 			conn.Close()
 		}
 	}()
+
+	l.Info("starting mev-relay-proxy server", zap.String("listenAddr", *listenAddr), zap.String("uptraceDSN", *uptraceDSN), zap.String("nodeID", *nodeID), zap.String("authKey", *authKey), zap.String("relaysGRPCURL", *relaysGRPCURL), zap.Int("getHeaderDelayInMS", *getHeaderDelayInMS))
+
+	// Configure OpenTelemetry with sensible defaults.
+	uptrace.ConfigureOpentelemetry(
+		uptrace.WithDSN(*uptraceDSN),
+
+		uptrace.WithServiceName(_AppName),
+		uptrace.WithServiceVersion(_BuildVersion),
+		uptrace.WithDeploymentEnvironment(*nodeID),
+	)
+	// Send buffered spans and free resources.
+	defer func() {
+		if err := uptrace.Shutdown(ctx); err != nil {
+			l.Error("failed to shutdown uptrace", zap.Error(err))
+		}
+	}()
+
+	tracer := otel.Tracer("main")
+
 	// init service and server
-	svc := api.NewService(l, _BuildVersion, *nodeID, *authKey, clients...)
-	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS)
+	svc := api.NewService(l, tracer, _BuildVersion, *authKey, *nodeID, clients...)
+	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer)
 
 	exit := make(chan struct{})
 	go func() {
@@ -80,7 +105,7 @@ func main() {
 	go func(_ctx context.Context) {
 		wg := new(sync.WaitGroup)
 		svc.WrapStreamHeaders(_ctx, wg)
-	}(ctx)
+	}(context.Background())
 	if err := server.Start(); err != nil {
 		l.Fatal("failed to start mev-relay-proxy server", zap.Error(err))
 	}
