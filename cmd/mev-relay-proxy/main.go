@@ -25,7 +25,8 @@ import (
 var (
 	// Included in the build process
 	_BuildVersion string
-	_AppName      = "mev-relay-proxy"
+	_AppName      string
+	_Token        string
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
 
@@ -41,6 +42,7 @@ var (
 func main() {
 	flag.Parse()
 	l := newLogger(_AppName, _BuildVersion)
+	l.Info("starting relay proxy", zap.String("token", _Token))
 	ctx, cancel := context.WithCancel(context.Background())
 	// init client connection
 	var (

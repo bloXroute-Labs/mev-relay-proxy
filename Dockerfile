@@ -5,13 +5,7 @@ ARG APP
 ARG MAIN_FILE_PATH
 
 WORKDIR /build
-
-COPY go.mod ./
-COPY go.sum ./
-
-RUN go mod download
-ADD . .
-RUN --mount=type=cache,target=/root/.cache/go-build make build-for-docker
+COPY . /build/
 
 FROM alpine
 
