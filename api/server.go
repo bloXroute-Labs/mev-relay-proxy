@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/go-chi/chi/v5"
@@ -88,9 +89,24 @@ func (s *Server) Stop() {
 }
 
 func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
+	parentSpan := trace.SpanFromContext(req.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+
+	parentSpan.SetAttributes(
+		attribute.String("req_id", "req_id"),
+		attribute.String("blxr_message", "blxr_message"),
+		attribute.String("client_ip", "client_ip"),
+		attribute.String("resp_message", "resp_message"),
+		attribute.Int("resp_code", 200),
+	)
+
+	_, span := s.tracer.Start(parentSpanCtx, "HandleStatus")
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{}`)
+
+	defer span.End()
 }
 
 func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +114,19 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := r.Header.Get("authorization")
 	bodyBytes, err := io.ReadAll(r.Body)
+
+	parentSpan := trace.SpanFromContext(r.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+
+	parentSpan.SetAttributes(
+		attribute.String("req_id", "req_id"),
+		attribute.String("blxr_message", "blxr_message"),
+		attribute.String("client_ip", "client_ip"),
+		attribute.String("resp_message", "resp_message"),
+		attribute.Int("resp_code", 200),
+	)
+
+	_, span := s.tracer.Start(parentSpanCtx, "HandleRegistration")
 
 	if err != nil {
 		respondError(registration, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "could not read registration", ""), s.logger, nil)
@@ -109,6 +138,9 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 		respondError(registration, w, err, s.logger, metaData)
 		return
 	}
+
+	defer span.End()
+
 	respondOK(registration, w, out, s.logger, metaData)
 }
 
@@ -118,18 +150,48 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	parentHash := chi.URLParam(r, "parent_hash")
 	pubKey := chi.URLParam(r, "pubkey")
 	clientIP := GetIPXForwardedFor(r)
+
+	parentSpan := trace.SpanFromContext(r.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+
+	parentSpan.SetAttributes(
+		attribute.String("req_id", "req_id"),
+		attribute.String("blxr_message", "blxr_message"),
+		attribute.String("client_ip", "client_ip"),
+		attribute.String("resp_message", "resp_message"),
+		attribute.Int("resp_code", 200),
+	)
+
+	_, span := s.tracer.Start(parentSpanCtx, "HandleGetHeader")
+
 	<-time.After(time.Millisecond * time.Duration(s.getHeaderDelay))
 	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey)
 	if err != nil {
 		respondError(getHeader, w, err, s.logger, metaData)
 		return
 	}
+
+	defer span.End()
+
 	respondOK(getHeader, w, out, s.logger, metaData)
 }
 
 func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
+
+	parentSpan := trace.SpanFromContext(r.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+
+	parentSpan.SetAttributes(
+		attribute.String("req_id", "req_id"),
+		attribute.String("blxr_message", "blxr_message"),
+		attribute.String("client_ip", "client_ip"),
+		attribute.String("resp_message", "resp_message"),
+		attribute.Int("resp_code", 200),
+	)
+
+	_, span := s.tracer.Start(parentSpanCtx, "HandleGetPayload")
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -141,6 +203,9 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 		respondError(getPayload, w, err, s.logger, metaData)
 		return
 	}
+
+	defer span.End()
+
 	respondOK(getPayload, w, out, s.logger, metaData)
 }
 
