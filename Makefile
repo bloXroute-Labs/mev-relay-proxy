@@ -33,11 +33,11 @@ lint:
 
 .PHONY: build-for-docker
 build-for-docker:
-	GOOS=linux go build -ldflags "-X main._BuildVersion=${VERSION}"  -v -o ${APP} ${MAIN_FILE}
+	GOOS=linux GOARCH=amd64 go build -ldflags "-X main._BuildVersion=${VERSION}"  -v -o ${APP} ${MAIN_FILE}
 
 .PHONY: docker-image
 docker-image:
-	DOCKER_BUILDKIT=1 docker build --progress=plain --platform linux/x86_64  --build-arg APP_NAME=${APP_NAME} . -t ${APP}
+	DOCKER_BUILDKIT=1 docker build --progress=plain --platform linux/amd64 --build-arg APP_NAME=${APP_NAME} . -t ${APP}
 	docker tag ${REPO}:latest ${DOCKER_REPO}:${VERSION}
 	docker tag ${REPO}:latest ${DOCKER_REPO}:latest
 
