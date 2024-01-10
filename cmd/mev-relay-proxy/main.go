@@ -10,6 +10,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 
@@ -28,7 +29,7 @@ import (
 var (
 	// Included in the build process
 	_BuildVersion string
-	_AppName      = "mev-relay-proxy-internal"
+	_AppName      = "mev-relay-proxy"
 	_SecretToken  string
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
@@ -66,6 +67,8 @@ func main() {
 			conn.Close()
 		}
 	}()
+
+	log.Info("Starting mev-relay-proxy", "version", _BuildVersion, "listenAddr", *listenAddr, "relays", *relaysGRPCURL, "getHeaderDelayInMS", *getHeaderDelayInMS, "authKey", *authKey, "nodeID", *nodeID, "uptraceDSN", *uptraceDSN)
 
 	// Configure OpenTelemetry with sensible defaults.
 	uptrace.ConfigureOpentelemetry(
