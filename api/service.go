@@ -103,6 +103,8 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	regErr := getRegistrationRelay(spanCtx, s, req, out, id, clientIP, err)
 
 	if regErr != nil {
+		// log error
+		s.logger.Warn("failed to register validator", zap.Error(regErr), zap.String("clientIP", clientIP), zap.String("reqID", id))
 		return nil, nil, regErr
 	}
 	return struct{}{}, nil, nil
@@ -368,14 +370,17 @@ func getRegistrationRelay(ctx context.Context, s *Service, req *relaygrpc.Regist
 
 		if err != nil {
 			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
+			s.logger.Warn("failed to register validator", zap.Error(err), zap.String("clientIP", clientIP), zap.String("reqID", id))
 			continue
 		}
 		if out == nil {
 			err = toErrorResp(http.StatusInternalServerError, "failed to register", id, "empty response from relay", clientIP)
+			s.logger.Warn("failed to register validator", zap.Error(err), zap.String("clientIP", clientIP), zap.String("reqID", id))
 			continue
 		}
 		if out.Code != uint32(codes.OK) {
 			err = toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
+			s.logger.Warn("failed to register validator", zap.Error(err), zap.String("clientIP", clientIP), zap.String("reqID", id))
 			continue
 		}
 		// Break early if one of the node return success

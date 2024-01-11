@@ -56,33 +56,11 @@ func main() {
 		registrationClients []*api.Client
 	)
 
-	urls := strings.Split(*relaysGRPCURL, ",")
-	for _, url := range urls {
-		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
-		}
-		clients = append(clients, &api.Client{URL: url, RelayClient: relaygrpc.NewRelayClient(conn)})
-		conns = append(conns, conn)
-	}
-	defer func() {
-		for _, conn := range conns {
-			conn.Close()
-		}
-	}()
+	// Parse the relaysGRPCURL
+	newClients := getClientsFromURLs(l, *relaysGRPCURL, conns, clients)
 
 	// Parse the registrationRelaysURL
-	registrationRelays := strings.Split(*registrationRelaysURL, ",")
-
-	// Dial each registration relay and store the connections
-	for _, registrationURL := range registrationRelays {
-		conn, err := grpc.Dial(registrationURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			// Handle error: failed to dial relay
-			log.Fatalf("Failed to dial registration relay: %v", err)
-		}
-		registrationClients = append(registrationClients, &api.Client{URL: registrationURL, RelayClient: relaygrpc.NewRelayClient(conn)})
-	}
+	newRegistrationClients := getClientsFromURLs(l, *registrationRelaysURL, conns, registrationClients)
 
 	l.Info("starting mev-relay-proxy server", zap.String("listenAddr", *listenAddr), zap.String("uptraceDSN", *uptraceDSN), zap.String("nodeID", *nodeID), zap.String("authKey", *authKey), zap.String("relaysGRPCURL", *relaysGRPCURL), zap.Int("getHeaderDelayInMS", *getHeaderDelayInMS))
 
@@ -105,7 +83,7 @@ func main() {
 
 	// init service and server
 
-	svc := api.NewService(l, tracer, _BuildVersion, *authKey, *nodeID, clients, registrationClients...)
+	svc := api.NewService(l, tracer, _BuildVersion, *authKey, *nodeID, newClients, newRegistrationClients...)
 
 	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer)
 
@@ -151,4 +129,26 @@ func getEnv(key string, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getClientsFromURLs(l *zap.Logger, relaysGRPCURL string, conns []*grpc.ClientConn, clients []*api.Client) []*api.Client {
+	// Parse the relaysGRPCURL
+	relays := strings.Split(relaysGRPCURL, ",")
+	// Dial each relay and store the connections
+	for _, relayURL := range relays {
+		conn, err := grpc.Dial(relayURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			// Handle error: failed to dial relay
+			log.Fatalf("Failed to dial relay: %v", err)
+		}
+		conns = append(conns, conn)
+		clients = append(clients, &api.Client{URL: relayURL, RelayClient: relaygrpc.NewRelayClient(conn)})
+	}
+
+	defer func() {
+		for _, conn := range conns {
+			conn.Close()
+		}
+	}()
+	return clients
 }
