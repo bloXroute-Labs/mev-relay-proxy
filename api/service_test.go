@@ -156,7 +156,12 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	defer conn.Close()
 
 	relayClient := relaygrpc.NewRelayClient(conn)
-	service := NewService(l, noop.NewTracerProvider().Tracer(""), "test", "", "", &Client{lis.Addr().String(), relayClient})
+	clients := []*Client{&Client{lis.Addr().String(), relayClient}}
+
+	registrationClient := &Client{lis.Addr().String(), relayClient}
+	registrationClients := []*Client{registrationClient}
+
+	service := NewService(l, noop.NewTracerProvider().Tracer(""), "test", "", "", clients, registrationClients...)
 
 	go service.StreamHeader(context.Background(), relayClient)
 
