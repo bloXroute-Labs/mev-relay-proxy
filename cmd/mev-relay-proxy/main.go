@@ -104,7 +104,7 @@ func main() {
 	tracer := otel.Tracer("main")
 
 	// init service and server
-	svc := api.NewService(l, tracer, _BuildVersion, *authKey, *nodeID, clients..., registrationClients...)
+	svc := api.NewService(l, tracer, _BuildVersion, *authKey, *nodeID, clients, registrationClients...)
 	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer)
 
 	exit := make(chan struct{})
