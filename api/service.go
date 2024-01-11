@@ -100,57 +100,10 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
 
 	// run for loop for the length of registrationClients and do round robin
-	for i := 0; i < len(s.registrationClients); i++ {
-		s.relayMutex.Lock()
-		selectedRelay := s.registrationClients[s.currentRelayIndex]
-		s.currentRelayIndex = (s.currentRelayIndex + 1) % len(s.registrationClients)
-		s.relayMutex.Unlock()
+	regErr := getRegistrationRelay(spanCtx, s, req, out, id, clientIP, err)
 
-		out, err = selectedRelay.RegisterValidator(spanCtx, req)
-
-		if err != nil {
-			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
-			continue
-		}
-		if out == nil {
-			err = toErrorResp(http.StatusInternalServerError, "failed to register", id, "empty response from relay", clientIP)
-			continue
-		}
-		if out.Code != uint32(codes.OK) {
-			err = toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
-			continue
-		}
-		// Break early if one of the node return success
-		if err == nil && out != nil && out.Code == uint32(codes.OK) {
-			break
-		}
-	}
-
-	// for _, client := range s.registrationClients {
-
-	// 	// Send registration to one node instead of looping
-
-	// 	out, err = client.RegisterValidator(spanCtx, req)
-
-	// 	if err != nil {
-	// 		err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
-	// 		continue
-	// 	}
-	// 	if out == nil {
-	// 		err = toErrorResp(http.StatusInternalServerError, "failed to register", id, "empty response from relay", clientIP)
-	// 		continue
-	// 	}
-	// 	if out.Code != uint32(codes.OK) {
-	// 		err = toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
-	// 		continue
-	// 	}
-	// 	// Break early if one of the node return success
-	// 	if err == nil {
-	// 		break
-	// 	}
-	// }
-	if err != nil {
-		return nil, nil, err
+	if regErr != nil {
+		return nil, nil, regErr
 	}
 	return struct{}{}, nil, nil
 }
@@ -402,4 +355,33 @@ func toErrorResp(code int, message, reqID, blxrMessage, clientIP string) *ErrorR
 			clientIP: clientIP,
 		},
 	}
+}
+
+func getRegistrationRelay(ctx context.Context, s *Service, req *relaygrpc.RegisterValidatorRequest, out *relaygrpc.RegisterValidatorResponse, id string, clientIP string, err error) error {
+	for i := 0; i < len(s.registrationClients); i++ {
+		s.relayMutex.Lock()
+		selectedRelay := s.registrationClients[s.currentRelayIndex]
+		s.currentRelayIndex = (s.currentRelayIndex + 1) % len(s.registrationClients)
+		s.relayMutex.Unlock()
+
+		out, err = selectedRelay.RegisterValidator(ctx, req)
+
+		if err != nil {
+			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
+			continue
+		}
+		if out == nil {
+			err = toErrorResp(http.StatusInternalServerError, "failed to register", id, "empty response from relay", clientIP)
+			continue
+		}
+		if out.Code != uint32(codes.OK) {
+			err = toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
+			continue
+		}
+		// Break early if one of the node return success
+		if err == nil && out != nil && out.Code == uint32(codes.OK) {
+			break
+		}
+	}
+	return err
 }
