@@ -37,7 +37,7 @@ var (
 	listenAddr = flag.String("addr", defaultListenAddr, "mev-relay-proxy server listening address")
 	//lint:ignore U1000 Ignore unused variable
 	relaysGRPCURL         = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
-	registrationRelaysURL = flag.String("registration relay", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "registration relay grpc URL")
+	registrationRelaysURL = flag.String("registration-relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "registration relays grpc URL")
 	getHeaderDelayInMS    = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
 	authKey               = flag.String("auth-key", "", "account authentication key")
 	nodeID                = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
