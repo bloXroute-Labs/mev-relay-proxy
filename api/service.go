@@ -76,29 +76,46 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		ReceivedAt: timestamppb.New(receivedAt),
 		AuthHeader: authHeader,
 	}
+
 	var (
-		err error
-		out *relaygrpc.RegisterValidatorResponse
+		errChan  = make(chan error, len(s.clients))
+		respChan = make(chan *relaygrpc.RegisterValidatorResponse, len(s.clients))
+		_err     error
 	)
 	for _, client := range s.clients {
-		out, err = client.RegisterValidator(ctx, req)
-		if err != nil {
-			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
-			continue
-		}
-		if out == nil {
-			err = toErrorResp(http.StatusInternalServerError, "failed to register", id, "empty response from relay", clientIP)
-			continue
-		}
-		if out.Code != uint32(codes.OK) {
-			err = toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
-			continue
+		go func(c relaygrpc.RelayClient) {
+			clientCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+
+			out, err := c.RegisterValidator(clientCtx, req)
+			if err != nil {
+				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
+				return
+			}
+			if out == nil {
+				errChan <- toErrorResp(http.StatusInternalServerError, "failed to register", id, "empty response from relay", clientIP)
+				return
+			}
+			if out.Code != uint32(codes.OK) {
+				errChan <- toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
+				return
+			}
+			respChan <- out
+		}(client)
+	}
+
+	// Wait for the first successful response or until all responses are processed
+	for i := 0; i < len(s.clients); i++ {
+		select {
+		case <-ctx.Done():
+			return nil, nil, toErrorResp(http.StatusInternalServerError, "failed to register", id, ctx.Err().Error(), clientIP)
+		case _err = <-errChan:
+			// if multiple client return errors, first error gets replaced by the subsequent errors
+		case <-respChan:
+			return struct{}{}, nil, nil
 		}
 	}
-	if err != nil {
-		return nil, nil, err
-	}
-	return struct{}{}, nil, nil
+	return nil, nil, _err
 }
 
 func (s *Service) WrapStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
@@ -250,33 +267,46 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		ReceivedAt: timestamppb.New(receivedAt),
 	}
 	var (
-		err  error
-		out  *relaygrpc.GetPayloadResponse
-		meta string
+		errChan  = make(chan error, len(s.clients))
+		respChan = make(chan *relaygrpc.GetPayloadResponse, len(s.clients))
+		_err     error
+		meta     string
 	)
 	for _, client := range s.clients {
-		out, err = client.GetPayload(ctx, req)
-		if err != nil {
-			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
-			continue
-		}
-		if out == nil {
-			err = toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, "empty response from relay", clientIP)
-			continue
-		}
-		meta = fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v-blockHash-%v-proposerIndex-%v", out.GetSlot(), out.GetParentHash(), out.GetPubkey(), out.GetBlockHash(), out.GetProposerIndex())
-		if out.Code != uint32(codes.OK) {
-			err = toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
-			continue
-		}
-		// Return early if one of the node return success
-		return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
+		go func(c relaygrpc.RelayClient) {
+			clientCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+
+			out, err := c.GetPayload(clientCtx, req)
+			if err != nil {
+				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
+				return
+			}
+			if out == nil {
+				errChan <- toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, "empty response from relay", clientIP)
+				return
+			}
+			if out.Code != uint32(codes.OK) {
+				errChan <- toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
+				return
+			}
+			// Set meta and send the response
+			meta = fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v-blockHash-%v-proposerIndex-%v", out.GetSlot(), out.GetParentHash(), out.GetPubkey(), out.GetBlockHash(), out.GetProposerIndex())
+			respChan <- out
+		}(client)
 	}
-	if err != nil {
-		return nil, meta, err
+	// Wait for the first successful response or until all responses are processed
+	for i := 0; i < len(s.clients); i++ {
+		select {
+		case <-ctx.Done():
+			return nil, meta, toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, ctx.Err().Error(), clientIP)
+		case _err = <-errChan:
+			// if multiple client return errors, first error gets replaced by the subsequent errors
+		case out := <-respChan:
+			return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
+		}
 	}
-	// execution never reaches here
-	return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
+	return nil, meta, _err
 }
 
 type ErrorResp struct {
