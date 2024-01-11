@@ -57,10 +57,20 @@ func main() {
 	)
 
 	// Parse the relaysGRPCURL
-	newClients := getClientsFromURLs(l, *relaysGRPCURL, conns, clients)
+	newClients, newConns := getClientsFromURLs(l, *relaysGRPCURL, conns, clients)
+	defer func() {
+		for _, conn := range newConns {
+			conn.Close()
+		}
+	}()
 
 	// Parse the registrationRelaysURL
-	newRegistrationClients := getClientsFromURLs(l, *registrationRelaysURL, conns, registrationClients)
+	newRegistrationClients, newRegConns := getClientsFromURLs(l, *registrationRelaysURL, conns, registrationClients)
+	defer func() {
+		for _, conn := range newRegConns {
+			conn.Close()
+		}
+	}()
 
 	l.Info("starting mev-relay-proxy server", zap.String("listenAddr", *listenAddr), zap.String("uptraceDSN", *uptraceDSN), zap.String("nodeID", *nodeID), zap.String("authKey", *authKey), zap.String("relaysGRPCURL", *relaysGRPCURL), zap.Int("getHeaderDelayInMS", *getHeaderDelayInMS))
 
@@ -131,7 +141,7 @@ func getEnv(key string, defaultValue string) string {
 	return defaultValue
 }
 
-func getClientsFromURLs(l *zap.Logger, relaysGRPCURL string, conns []*grpc.ClientConn, clients []*api.Client) []*api.Client {
+func getClientsFromURLs(l *zap.Logger, relaysGRPCURL string, conns []*grpc.ClientConn, clients []*api.Client) ([]*api.Client, []*grpc.ClientConn) {
 	// Parse the relaysGRPCURL
 	relays := strings.Split(relaysGRPCURL, ",")
 	// Dial each relay and store the connections
@@ -145,10 +155,5 @@ func getClientsFromURLs(l *zap.Logger, relaysGRPCURL string, conns []*grpc.Clien
 		clients = append(clients, &api.Client{URL: relayURL, RelayClient: relaygrpc.NewRelayClient(conn)})
 	}
 
-	defer func() {
-		for _, conn := range conns {
-			conn.Close()
-		}
-	}()
-	return clients
+	return clients, conns
 }
