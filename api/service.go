@@ -53,13 +53,14 @@ type Header struct {
 
 func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, clients ...*Client) *Service {
 	return &Service{
-		logger:  logger,
-		tracer:  tracer,
-		version: version,
-		clients: clients,
-		headers: syncmap.NewStringMapOf[[]*Header](),
-		nodeID:  nodeID,
-		authKey: authKey,
+		logger:              logger,
+		tracer:              tracer,
+		version:             version,
+		clients:             clients,
+		headers:             syncmap.NewStringMapOf[[]*Header](),
+		nodeID:              nodeID,
+		authKey:             authKey,
+		registrationClients: registrationClients,
 	}
 }
 
@@ -95,6 +96,9 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
 
 	for _, client := range s.clients {
+
+		// Send registration to one node instead of looping
+
 		out, err = client.RegisterValidator(spanCtx, req)
 		if err != nil {
 			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)

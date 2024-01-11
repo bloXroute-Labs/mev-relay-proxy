@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -35,23 +36,26 @@ var (
 
 	listenAddr = flag.String("addr", defaultListenAddr, "mev-relay-proxy server listening address")
 	//lint:ignore U1000 Ignore unused variable
-	relayGRPCURL       = flag.String("relay", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "relay grpc URL")
-	relaysGRPCURL      = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
-	getHeaderDelayInMS = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
-	authKey            = flag.String("auth-key", "", "account authentication key")
-	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
-	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
+	relaysGRPCURL         = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
+	registrationRelaysURL = flag.String("registration relay", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "registration relay grpc URL")
+	getHeaderDelayInMS    = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
+	authKey               = flag.String("auth-key", "", "account authentication key")
+	nodeID                = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
+	uptraceDSN            = flag.String("uptrace-dsn", "", "uptrace URL")
 )
 
 func main() {
 	flag.Parse()
+
 	l := newLogger(_AppName, _BuildVersion)
 	ctx, cancel := context.WithCancel(context.Background())
 	// init client connection
 	var (
-		clients []*api.Client
-		conns   []*grpc.ClientConn
+		clients             []*api.Client
+		conns               []*grpc.ClientConn
+		registrationClients []*api.Client
 	)
+
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
 		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -66,6 +70,19 @@ func main() {
 			conn.Close()
 		}
 	}()
+
+	// Parse the registrationRelaysURL
+	registrationRelays := strings.Split(*registrationRelaysURL, ",")
+
+	// Dial each registration relay and store the connections
+	for _, registrationURL := range registrationRelays {
+		conn, err := grpc.Dial(registrationURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			// Handle error: failed to dial relay
+			log.Fatalf("Failed to dial registration relay: %v", err)
+		}
+		registrationClients = append(registrationClients, &api.Client{URL: registrationURL, RelayClient: relaygrpc.NewRelayClient(conn)})
+	}
 
 	l.Info("starting mev-relay-proxy server", zap.String("listenAddr", *listenAddr), zap.String("uptraceDSN", *uptraceDSN), zap.String("nodeID", *nodeID), zap.String("authKey", *authKey), zap.String("relaysGRPCURL", *relaysGRPCURL), zap.Int("getHeaderDelayInMS", *getHeaderDelayInMS))
 
@@ -87,7 +104,7 @@ func main() {
 	tracer := otel.Tracer("main")
 
 	// init service and server
-	svc := api.NewService(l, tracer, _BuildVersion, *authKey, *nodeID, clients...)
+	svc := api.NewService(l, tracer, _BuildVersion, *authKey, *nodeID, clients..., registrationClients...)
 	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer)
 
 	exit := make(chan struct{})
