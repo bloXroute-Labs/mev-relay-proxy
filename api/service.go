@@ -256,7 +256,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		}()
 	}()
 
-	_, spanStoringHeader := s.tracer.Start(parentSpanCtx, "storing header")
+	_, spanStoringHeader := s.tracer.Start(parentSpanCtx, "storingHeader")
 	val := new(big.Int)
 	index := 0
 	//TODO: currently storing all the header values for the particular slot
@@ -311,6 +311,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		out  *relaygrpc.GetPayloadResponse
 		meta string
 	)
+	_, sendingPayload := s.tracer.Start(spanCtx, "Iterating clients to get payload")
 	for _, client := range s.clients {
 		out, err = client.GetPayload(spanCtx, req)
 		if err != nil {
@@ -326,6 +327,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			err = toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
 			continue
 		}
+		sendingPayload.End()
 		// Return early if one of the node return success
 		return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
 	}
