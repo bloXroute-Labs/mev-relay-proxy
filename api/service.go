@@ -176,14 +176,22 @@ func (s *Service) waitUntilReady(ctx context.Context, client *Client) bool {
 }
 func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
 
-	go s.StreamHeader(ctx, client)
+	go func() {
+		sCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		s.StreamHeader(sCtx, client)
+	}()
 	for {
 		select {
 		case <-client.Reconnect:
 			if !s.waitUntilReady(ctx, client) {
 				return fmt.Errorf("failed to establish a connection within the defined timeout, url: %s", client.URL)
 			}
-			go s.StreamHeader(ctx, client)
+			go func() {
+				sCtx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				s.StreamHeader(sCtx, client)
+			}()
 		case <-client.Done:
 			s.logger.Info("context done for processing requests")
 			return nil
@@ -209,10 +217,9 @@ func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
 func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.StreamHeaderResponse, error) {
 	id := uuid.NewString()
 	nodeID := fmt.Sprintf("%v-%v-%v", s.nodeID, id, time.Now().UTC().String())
-	sCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	sCtx = metadata.AppendToOutgoingContext(sCtx, "authorization", s.authKey)
-	stream, err := client.StreamHeader(sCtx, &relaygrpc.StreamHeaderRequest{
+
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:   id,
 		NodeId:  nodeID,
 		Version: s.version,
@@ -225,9 +232,9 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 StreamLoop:
 	for {
 		select {
-		case <-sCtx.Done():
+		case <-ctx.Done():
 			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
-			return nil, sCtx.Err()
+			return nil, ctx.Err()
 		default:
 			s.logger.Info("running default")
 			header, err := stream.Recv()
