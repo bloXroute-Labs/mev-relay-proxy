@@ -175,7 +175,6 @@ func (s *Service) waitUntilReady(ctx context.Context, client *Client) bool {
 	return true
 }
 func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
-	defer client.Conn.Close()
 
 	go s.StreamHeader(ctx, client)
 	for {
@@ -230,6 +229,7 @@ StreamLoop:
 			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
 			return nil, sCtx.Err()
 		default:
+			s.logger.Info("running default")
 			header, err := stream.Recv()
 			if err == io.EOF {
 				s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
