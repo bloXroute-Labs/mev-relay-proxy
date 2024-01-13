@@ -179,7 +179,9 @@ func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
 	go func() {
 		sCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		s.StreamHeader(sCtx, client)
+		if _, err := s.StreamHeader(sCtx, client); err != nil {
+			s.logger.Warn("failed to start streaming headers", zap.Error(err), zap.String("url", client.URL))
+		}
 	}()
 	for {
 		select {
@@ -190,7 +192,9 @@ func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
 			go func() {
 				sCtx, cancel := context.WithCancel(ctx)
 				defer cancel()
-				s.StreamHeader(sCtx, client)
+				if _, err := s.StreamHeader(sCtx, client); err != nil {
+					s.logger.Warn("failed to start streaming headers", zap.Error(err), zap.String("url", client.URL))
+				}
 			}()
 		case <-client.Done:
 			s.logger.Info("context done for processing requests")
@@ -229,9 +233,12 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 		return nil, err
 	}
+	stateChecker := time.NewTicker(time.Second * 10)
 StreamLoop:
 	for {
 		select {
+		case <-stateChecker.C:
+			s.logger.Info("stream state info", zap.String("state", client.Conn.GetState().String()))
 		case <-ctx.Done():
 			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
 			return nil, ctx.Err()
