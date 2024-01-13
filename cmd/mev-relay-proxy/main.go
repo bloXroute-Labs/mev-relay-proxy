@@ -53,7 +53,9 @@ func main() {
 		if err != nil {
 			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
 		}
-		clients = append(clients, &api.Client{URL: url, RelayClient: relaygrpc.NewRelayClient(conn)})
+		doneCh := make(chan struct{})
+		reconnectCh := make(chan struct{})
+		clients = append(clients, &api.Client{URL: url, Conn: conn, Done: doneCh, Reconnect: reconnectCh, RelayClient: relaygrpc.NewRelayClient(conn)})
 		conns = append(conns, conn)
 	}
 	defer func() {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/metadata"
 	"io"
 	"math/big"
@@ -18,6 +20,11 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
+)
+
+const (
+	connReconnectTimeout = 5 * time.Second
+	requestTimeout       = 3 * time.Second
 )
 
 type IService interface {
@@ -37,7 +44,10 @@ type Service struct {
 }
 
 type Client struct {
-	URL string
+	URL       string
+	Conn      *grpc.ClientConn
+	Done      chan struct{}
+	Reconnect chan struct{}
 	relaygrpc.RelayClient
 }
 
@@ -84,7 +94,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	)
 	for _, client := range s.clients {
 		go func(c relaygrpc.RelayClient) {
-			clientCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
 
 			out, err := c.RegisterValidator(clientCtx, req)
@@ -123,34 +133,87 @@ func (s *Service) WrapStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
 		wg.Add(1)
 		go func(_ctx context.Context, c *Client) {
 			defer wg.Done()
-			s.WrapStreamHeader(_ctx, c)
+			s.handleStream(_ctx, c)
 		}(ctx, client)
 	}
 	wg.Wait()
 }
 
-func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
+func (s *Service) handleStream(ctx context.Context, client *Client) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.logger.Warn("Stream header context cancelled")
+			s.logger.Warn("stream header context cancelled")
 			return
 		default:
-			if _, err := s.StreamHeader(ctx, client); err != nil {
-				s.logger.Warn("Failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
-			} else {
-				s.logger.Warn("Stream header stopped.  Sleeping 1 second and then reconnecting", zap.String("url", client.URL))
+			if err := s.ProcessStream(ctx, client); err != nil {
+				s.logger.Warn("failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
 			}
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Second)
 		}
 	}
 }
 
-func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient) (*relaygrpc.StreamHeaderResponse, error) {
+func (s *Service) waitUntilReady(ctx context.Context, client *Client) bool {
+	rCtx, cancel := context.WithTimeout(ctx, connReconnectTimeout) //define how long you want to wait for connection to be restored before giving up
+	defer cancel()
+
+	currentState := client.Conn.GetState()
+	stillConnecting := true
+
+	for currentState != connectivity.Ready && stillConnecting {
+		//will return true when state has changed from thisState, false if timeout
+		stillConnecting = client.Conn.WaitForStateChange(rCtx, currentState)
+		currentState = client.Conn.GetState()
+		s.logger.With(zap.Any("state: ", currentState), zap.Duration("timeout", connReconnectTimeout)).Info("Attempting reconnection. State has changed to:")
+	}
+
+	if !stillConnecting {
+		s.logger.Error("Connection attempt has timed out.")
+		return false
+	}
+	return true
+}
+func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
+	defer client.Conn.Close()
+
+	go s.StreamHeader(ctx, client)
+	for {
+		select {
+		case <-client.Reconnect:
+			if !s.waitUntilReady(ctx, client) {
+				return fmt.Errorf("failed to establish a connection within the defined timeout")
+			}
+			go s.StreamHeader(ctx, client)
+		case <-client.Done:
+			s.logger.Info("context done for processing requests")
+			return nil
+		}
+	}
+}
+
+//func (s *Service) streamAndReconnect(ctx context.Context, client *Client) error {
+//	for {
+//		select {
+//		case <-ctx.Done():
+//			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("method", "streamAndReconnect"))
+//			return ctx.Err()
+//		default:
+//			if _, err := s.StreamHeader(ctx, client); err != nil {
+//				return err
+//			}
+//
+//		}
+//	}
+//}
+
+func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.StreamHeaderResponse, error) {
 	id := uuid.NewString()
 	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
+	sCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	sCtx = metadata.AppendToOutgoingContext(sCtx, "authorization", s.authKey)
+	stream, err := client.StreamHeader(sCtx, &relaygrpc.StreamHeaderRequest{
 		ReqId:   id,
 		NodeId:  nodeID,
 		Version: s.version,
@@ -163,17 +226,19 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 StreamLoop:
 	for {
 		select {
-		case <-ctx.Done():
-			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id))
-			return nil, ctx.Err()
+		case <-sCtx.Done():
+			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"))
+			return nil, sCtx.Err()
 		default:
 			header, err := stream.Recv()
 			if err == io.EOF {
 				s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id))
+				client.Done <- struct{}{}
 				break StreamLoop
 			}
 			if err != nil {
 				s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id))
+				client.Reconnect <- struct{}{}
 				break StreamLoop
 			}
 			// Added empty streaming as a temporary workaround to maintain streaming alive
