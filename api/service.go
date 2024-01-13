@@ -165,7 +165,7 @@ func (s *Service) waitUntilReady(ctx context.Context, client *Client) bool {
 		//will return true when state has changed from thisState, false if timeout
 		stillConnecting = client.Conn.WaitForStateChange(rCtx, currentState)
 		currentState = client.Conn.GetState()
-		s.logger.With(zap.Any("state: ", currentState), zap.Duration("timeout", connReconnectTimeout)).Info("Attempting reconnection. State has changed to:")
+		s.logger.With(zap.Any("state: ", currentState), zap.String("url", client.URL), zap.Duration("timeout", connReconnectTimeout)).Info("Attempting reconnection. State has changed to:")
 	}
 
 	if !stillConnecting {
@@ -182,7 +182,7 @@ func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
 		select {
 		case <-client.Reconnect:
 			if !s.waitUntilReady(ctx, client) {
-				return fmt.Errorf("failed to establish a connection within the defined timeout")
+				return fmt.Errorf("failed to establish a connection within the defined timeout, url: %s", client.URL)
 			}
 			go s.StreamHeader(ctx, client)
 		case <-client.Done:
@@ -209,7 +209,7 @@ func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
 
 func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.StreamHeaderResponse, error) {
 	id := uuid.NewString()
-	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
+	nodeID := fmt.Sprintf("%v-%v-%v", s.nodeID, id, time.Now().UTC().String())
 	sCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	sCtx = metadata.AppendToOutgoingContext(sCtx, "authorization", s.authKey)
@@ -218,33 +218,33 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		NodeId:  nodeID,
 		Version: s.version,
 	})
-	s.logger.Info("streaming headers", zap.String("nodeID", nodeID))
+	s.logger.Info("streaming headers", zap.String("nodeID", nodeID), zap.String("url", client.URL))
 	if err != nil {
-		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id))
+		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 		return nil, err
 	}
 StreamLoop:
 	for {
 		select {
 		case <-sCtx.Done():
-			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"))
+			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
 			return nil, sCtx.Err()
 		default:
 			header, err := stream.Recv()
 			if err == io.EOF {
-				s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id))
+				s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 				client.Done <- struct{}{}
 				break StreamLoop
 			}
 			if err != nil {
-				s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id))
+				s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 				client.Reconnect <- struct{}{}
 				break StreamLoop
 			}
 			// Added empty streaming as a temporary workaround to maintain streaming alive
 			// TODO: this need to be handled by adding settings for keep alive params on both server and client
 			if header.GetBlockHash() == "" {
-				s.logger.Debug("received empty stream", zap.String("nodeID", nodeID), zap.String("reqID", id))
+				s.logger.Debug("received empty stream", zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 				continue StreamLoop
 			}
 			k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", header.GetSlot(), header.GetParentHash(), header.GetPubkey())
@@ -256,6 +256,7 @@ StreamLoop:
 				zap.String("blockValue", new(big.Int).SetBytes(header.GetValue()).String()),
 				zap.String("pubKey", header.GetPubkey()),
 				zap.String("nodeID", nodeID),
+				zap.String("url", client.URL),
 			)
 			v := &Header{
 				Value:     header.GetValue(),
@@ -272,7 +273,7 @@ StreamLoop:
 			s.headers.Store(k, h)
 		}
 	}
-	s.logger.Warn("closing connection", zap.String("nodeID", nodeID), zap.String("reqID", id))
+	s.logger.Warn("closing connection", zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 	return nil, nil
 }
 
