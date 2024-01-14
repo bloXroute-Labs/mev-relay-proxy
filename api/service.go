@@ -180,9 +180,6 @@ func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
 	go func() {
 		sCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		if _, err := s.StreamHeader(sCtx, client); err != nil {
-			s.logger.Warn("failed to start streaming headers", zap.Error(err), zap.String("url", client.URL))
-		}
 		go func() {
 			stateChecker := time.NewTicker(stateCheckerInterval)
 			for {
@@ -194,6 +191,10 @@ func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
 				}
 			}
 		}()
+		if _, err := s.StreamHeader(sCtx, client); err != nil {
+			s.logger.Warn("failed to start streaming headers", zap.Error(err), zap.String("url", client.URL))
+		}
+
 	}()
 	for {
 		select {
@@ -204,9 +205,6 @@ func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
 			go func() {
 				sCtx, cancel := context.WithCancel(ctx)
 				defer cancel()
-				if _, err := s.StreamHeader(sCtx, client); err != nil {
-					s.logger.Warn("failed to start streaming headers", zap.Error(err), zap.String("url", client.URL))
-				}
 				go func() {
 					stateChecker := time.NewTicker(stateCheckerInterval)
 					for {
@@ -218,6 +216,10 @@ func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
 						}
 					}
 				}()
+				if _, err := s.StreamHeader(sCtx, client); err != nil {
+					s.logger.Warn("failed to start streaming headers", zap.Error(err), zap.String("url", client.URL))
+				}
+
 			}()
 		case <-client.Done:
 			s.logger.Info("context done for processing requests")
