@@ -243,12 +243,14 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 		return nil, err
 	}
+	go func() {
+		<-ctx.Done()
+		s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
+		stream.CloseSend()
+	}()
 StreamLoop:
 	for {
 		select {
-		case <-ctx.Done():
-			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
-			return nil, ctx.Err()
 		case <-stream.Context().Done():
 			s.logger.Warn("stream context cancelled, closing connection", zap.Error(stream.Context().Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
 			return nil, stream.Context().Err()
