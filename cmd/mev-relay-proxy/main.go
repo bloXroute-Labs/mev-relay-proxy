@@ -41,6 +41,7 @@ var (
 func main() {
 	flag.Parse()
 	l := newLogger(_AppName, _BuildVersion)
+	defer l.Sync()
 	ctx, cancel := context.WithCancel(context.Background())
 	// init client connection
 	var (
@@ -89,6 +90,7 @@ func main() {
 	<-exit
 }
 func newLogger(appName, version string) *zap.Logger {
+
 	logLevel := zap.DebugLevel
 	var zapCore zapcore.Core
 	level := zap.NewAtomicLevel()
