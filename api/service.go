@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"io"
 	"math/big"
 	"net/http"
@@ -41,14 +41,13 @@ type Service struct {
 	//TODO: add flag to receive node id
 	nodeID string // UUID
 	//slotCleanUpCh chan uint64
-	authKey string
+	authKey      string
+	isStreamOpen bool
 }
 
 type Client struct {
-	URL       string
-	Conn      *grpc.ClientConn
-	Done      chan struct{}
-	Reconnect chan struct{}
+	URL  string
+	Conn *grpc.ClientConn
 	relaygrpc.RelayClient
 }
 
@@ -147,83 +146,10 @@ func (s *Service) handleStream(ctx context.Context, client *Client) {
 			s.logger.Warn("stream header context cancelled")
 			return
 		default:
-			if err := s.ProcessStream(ctx, client); err != nil {
+			if _, err := s.StreamHeader(ctx, client); err != nil {
 				s.logger.Warn("failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
 			}
 			time.Sleep(time.Second)
-		}
-	}
-}
-
-func (s *Service) waitUntilReady(ctx context.Context, client *Client) bool {
-	rCtx, cancel := context.WithTimeout(ctx, connReconnectTimeout) //define how long you want to wait for connection to be restored before giving up
-	defer cancel()
-
-	currentState := client.Conn.GetState()
-	stillConnecting := true
-
-	for currentState != connectivity.Ready && stillConnecting {
-		//will return true when state has changed from thisState, false if timeout
-		stillConnecting = client.Conn.WaitForStateChange(rCtx, currentState)
-		currentState = client.Conn.GetState()
-		s.logger.With(zap.Any("state: ", currentState), zap.String("url", client.URL), zap.Duration("timeout", connReconnectTimeout)).Info("Attempting reconnection. State has changed to:")
-	}
-
-	if !stillConnecting {
-		s.logger.Error("Connection attempt has timed out.")
-		return false
-	}
-	return true
-}
-func (s *Service) ProcessStream(ctx context.Context, client *Client) error {
-
-	go func() {
-		sCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		go func() {
-			stateChecker := time.NewTicker(stateCheckerInterval)
-			for {
-				select {
-				case <-stateChecker.C:
-					s.logger.Info("stream state info", zap.String("state", client.Conn.GetState().String()), zap.String("url", client.URL))
-				default:
-
-				}
-			}
-		}()
-		if _, err := s.StreamHeader(sCtx, client); err != nil {
-			s.logger.Warn("failed to start streaming headers", zap.Error(err), zap.String("url", client.URL))
-		}
-
-	}()
-	for {
-		select {
-		case <-client.Reconnect:
-			if !s.waitUntilReady(ctx, client) {
-				return fmt.Errorf("failed to establish a connection within the defined timeout, url: %s", client.URL)
-			}
-			go func() {
-				sCtx, cancel := context.WithCancel(ctx)
-				defer cancel()
-				go func() {
-					stateChecker := time.NewTicker(stateCheckerInterval)
-					for {
-						select {
-						case <-stateChecker.C:
-							s.logger.Info("stream state info", zap.String("state", client.Conn.GetState().String()), zap.String("url", client.URL))
-						default:
-
-						}
-					}
-				}()
-				if _, err := s.StreamHeader(sCtx, client); err != nil {
-					s.logger.Warn("failed to start streaming headers", zap.Error(err), zap.String("url", client.URL))
-				}
-
-			}()
-		case <-client.Done:
-			s.logger.Info("context done for processing requests")
-			return nil
 		}
 	}
 }
@@ -243,38 +169,67 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 		return nil, err
 	}
+	s.isStreamOpen = true
+	done := make(chan struct{})
+	var once sync.Once
+	closeDone := func() {
+		once.Do(func() {
+			close(done)
+		})
+	}
 	go func() {
-		for {
-			select {
-			case <-stream.Context().Done():
-				s.logger.Warn("stream context cancelled, closing connection", zap.Error(stream.Context().Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
-				client.Done <- struct{}{}
-			case <-ctx.Done():
-				s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
-				client.Done <- struct{}{}
-			default:
-			}
+		select {
+		case <-stream.Context().Done():
+			s.logger.Warn("stream context cancelled, closing connection", zap.Error(stream.Context().Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
+			closeDone()
+		case <-ctx.Done():
+			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
+			closeDone()
 		}
 	}()
-StreamLoop:
 	for {
+		select {
+		case <-done:
+			return nil, nil
+		default:
+		}
 		s.logger.Info("running default")
 		header, err := stream.Recv()
 		if err == io.EOF {
 			s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
-			client.Done <- struct{}{}
-			break StreamLoop
+			closeDone()
+			break
+		}
+		_s, ok := status.FromError(err)
+		if !ok {
+			s.logger.Warn("invalid grpc error status", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
+			continue
+		}
+
+		if _s.Code() == codes.Canceled {
+			s.logger.Warn("received cancellation signal, shutting down", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
+			// mark as canceled to stop the upstream retry loop
+			s.isStreamOpen = false
+			closeDone()
+			break
+		}
+
+		if _s.Code() != codes.OK {
+			s.logger.Warn("server unavailable,try reconnecting", zap.Error(_s.Err()), zap.String("nodeID", nodeID), zap.String("code", _s.Code().String()), zap.String("reqID", id), zap.String("url", client.URL))
+			s.isStreamOpen = false
+			closeDone()
+			break
 		}
 		if err != nil {
 			s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
-			client.Reconnect <- struct{}{}
-			break StreamLoop
+			closeDone()
+			break
 		}
 		// Added empty streaming as a temporary workaround to maintain streaming alive
 		// TODO: this need to be handled by adding settings for keep alive params on both server and client
 		if header.GetBlockHash() == "" {
 			s.logger.Debug("received empty stream", zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
-			continue StreamLoop
+			continue
 		}
 		k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", header.GetSlot(), header.GetParentHash(), header.GetPubkey())
 		s.logger.Info("received header",
@@ -300,8 +255,8 @@ StreamLoop:
 		h := make([]*Header, 0)
 		h = append(h, v)
 		s.headers.Store(k, h)
-
 	}
+	<-done
 	s.logger.Warn("closing connection", zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 	return nil, nil
 }

@@ -61,7 +61,7 @@ func TestService_RegisterValidator(t *testing.T) {
 		t.Run(testName, func(t *testing.T) {
 			s := &Service{
 				logger:  zap.NewNop(),
-				clients: []*Client{{"", nil, nil, nil, &mockRelayClient{RegisterValidatorFunc: tt.f}}},
+				clients: []*Client{{"", nil, &mockRelayClient{RegisterValidatorFunc: tt.f}}},
 			}
 			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", "")
 			if err == nil {
@@ -151,10 +151,8 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 		t.Fatal("Failed to create client connection", zap.Error(err))
 	}
 	defer conn.Close()
-	doneCh := make(chan struct{})
-	reconnectingCh := make(chan struct{})
 	relayClient := relaygrpc.NewRelayClient(conn)
-	c := &Client{lis.Addr().String(), conn, doneCh, reconnectingCh, relayClient}
+	c := &Client{lis.Addr().String(), conn, relayClient}
 	service := NewService(l, "test", "", "", c)
 
 	go service.StreamHeader(ctx, c)

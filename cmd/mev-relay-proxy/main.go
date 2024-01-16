@@ -50,13 +50,11 @@ func main() {
 	)
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
-		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 		if err != nil {
 			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
 		}
-		doneCh := make(chan struct{})
-		reconnectCh := make(chan struct{})
-		clients = append(clients, &api.Client{URL: url, Conn: conn, Done: doneCh, Reconnect: reconnectCh, RelayClient: relaygrpc.NewRelayClient(conn)})
+		clients = append(clients, &api.Client{URL: url, Conn: conn, RelayClient: relaygrpc.NewRelayClient(conn)})
 		conns = append(conns, conn)
 	}
 	defer func() {
