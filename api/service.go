@@ -174,6 +174,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	var once sync.Once
 	closeDone := func() {
 		once.Do(func() {
+			s.logger.Info("calling close done once")
 			close(done)
 		})
 	}
@@ -193,7 +194,6 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			return nil, nil
 		default:
 		}
-		s.logger.Info("running default")
 		header, err := stream.Recv()
 		if err == io.EOF {
 			s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", nodeID), zap.String("reqID", id), zap.String("url", client.URL))
