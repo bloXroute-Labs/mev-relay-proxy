@@ -36,8 +36,9 @@ type Service struct {
 	//TODO: add flag to receive node id
 	nodeID string // UUID
 	//slotCleanUpCh chan uint64
-	authKey string
-	tracer  trace.Tracer
+	authKey     string
+	tracer      trace.Tracer
+	secretToken string
 }
 
 type Client struct {
@@ -51,15 +52,16 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, secretToken string, clients ...*Client) *Service {
 	return &Service{
-		logger:  logger,
-		tracer:  tracer,
-		version: version,
-		clients: clients,
-		headers: syncmap.NewStringMapOf[[]*Header](),
-		nodeID:  nodeID,
-		authKey: authKey,
+		logger:      logger,
+		tracer:      tracer,
+		version:     version,
+		clients:     clients,
+		headers:     syncmap.NewStringMapOf[[]*Header](),
+		nodeID:      nodeID,
+		authKey:     authKey,
+		secretToken: secretToken,
 	}
 }
 
@@ -72,6 +74,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.Time("receivedAt", receivedAt),
 	)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	ctx = metadata.AppendToOutgoingContext(ctx, "secret-token", s.secretToken)
 	parentSpan := trace.SpanFromContext(ctx)
 	req := &relaygrpc.RegisterValidatorRequest{
 		ReqId:      id,
@@ -157,6 +160,7 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
 
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	ctx = metadata.AppendToOutgoingContext(ctx, "secret-token", s.secretToken)
 
 	parentSpan := trace.SpanFromContext(ctx)
 
@@ -294,6 +298,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		attribute.String("reqID", id),
 	)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	ctx = metadata.AppendToOutgoingContext(ctx, "secret-token", s.secretToken)
 
 	parentSpanCtx := trace.ContextWithSpan(ctx, parentSpan)
 	spanCtx, span := s.tracer.Start(parentSpanCtx, "getPayload")
