@@ -4,6 +4,7 @@ ARG TOKEN
 ARG VERSION
 ARG APP
 ARG MAIN_FILE_PATH
+ARG SECRET_TOKEN
 
 ENV GOPRIVATE=github.com/bloXroute-Labs/*
 RUN git config --global url.https://$TOKEN@github.com/.insteadOf https://github.com/
@@ -15,7 +16,7 @@ COPY go.sum ./
 
 RUN go mod download
 ADD . .
-RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -X main._BuildVersion=${VERSION}" -v -o ${APP} ./${MAIN_FILE_PATH}
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -X main._BuildVersion=${VERSION} -X main._SecretToken=${SECRET_TOKEN}" -v -o ${APP} ./${MAIN_FILE_PATH}
 
 FROM alpine
 
