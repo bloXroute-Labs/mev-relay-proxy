@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/attestantio/go-builder-client v0.4.2
 	github.com/bloXroute-Labs/gateway/v2 v2.127.75-0.20231129102830-ab252898d3c3
-	github.com/bloXroute-Labs/relay-grpc v0.0.12
+	github.com/bloXroute-Labs/relay-grpc v0.0.13-0.20240116031021-fe1b73a3c524
 	github.com/go-chi/chi/v5 v5.0.10
 	github.com/google/uuid v1.3.1
 	github.com/uptrace/uptrace-go v1.21.0
