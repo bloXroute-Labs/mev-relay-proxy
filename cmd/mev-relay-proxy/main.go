@@ -20,6 +20,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 var (
@@ -42,6 +43,13 @@ func main() {
 	flag.Parse()
 	l := newLogger(_AppName, _BuildVersion)
 	ctx, cancel := context.WithCancel(context.Background())
+
+	keepaliveOpts := grpc.WithKeepaliveParams(keepalive.ClientParameters{
+		Time:                time.Minute,
+		Timeout:             20 * time.Second,
+		PermitWithoutStream: true,
+	})
+
 	// init client connection
 	var (
 		clients []*api.Client
@@ -49,7 +57,7 @@ func main() {
 	)
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
-		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), keepaliveOpts)
 		if err != nil {
 			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
 		}
