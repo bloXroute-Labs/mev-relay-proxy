@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bloXroute-Labs/gateway/v2/utils/syncmap"
-	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
+	relaygrpc "github.com/bloXroute-Labs/relay-grpc-private"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -74,16 +74,16 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.Time("receivedAt", receivedAt),
 	)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	ctx = metadata.AppendToOutgoingContext(ctx, "secret-token", s.secretToken)
 	parentSpan := trace.SpanFromContext(ctx)
 	req := &relaygrpc.RegisterValidatorRequest{
-		ReqId:      id,
-		Payload:    payload,
-		ClientIp:   clientIP,
-		NodeId:     s.nodeID,
-		Version:    s.version,
-		ReceivedAt: timestamppb.New(receivedAt),
-		AuthHeader: authHeader,
+		ReqId:       id,
+		Payload:     payload,
+		ClientIp:    clientIP,
+		NodeId:      s.nodeID,
+		Version:     s.version,
+		ReceivedAt:  timestamppb.New(receivedAt),
+		AuthHeader:  authHeader,
+		SecretToken: s.secretToken,
 	}
 	var (
 		err error
@@ -160,7 +160,6 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
 
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	ctx = metadata.AppendToOutgoingContext(ctx, "secret-token", s.secretToken)
 
 	parentSpan := trace.SpanFromContext(ctx)
 
@@ -298,7 +297,6 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		attribute.String("reqID", id),
 	)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	ctx = metadata.AppendToOutgoingContext(ctx, "secret-token", s.secretToken)
 
 	parentSpanCtx := trace.ContextWithSpan(ctx, parentSpan)
 	spanCtx, span := s.tracer.Start(parentSpanCtx, "getPayload")

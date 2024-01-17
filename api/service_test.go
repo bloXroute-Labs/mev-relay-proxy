@@ -19,7 +19,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/attestantio/go-builder-client/spec"
-	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
+	relaygrpc "github.com/bloXroute-Labs/relay-grpc-private"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
