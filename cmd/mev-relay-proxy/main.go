@@ -18,7 +18,7 @@ import (
 
 	"time"
 
-	relaygrpc "github.com/bloXroute-Labs/relay-grpc-private"
+	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
