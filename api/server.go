@@ -52,7 +52,7 @@ func (s *Server) Start() error {
 		ReadTimeout:       0,
 		ReadHeaderTimeout: 0,
 		WriteTimeout:      0,
-		IdleTimeout:       60 * time.Second,
+		IdleTimeout:       10 * time.Second,
 	}
 	err := s.server.ListenAndServe()
 	if err == http.ErrServerClosed {
@@ -63,10 +63,10 @@ func (s *Server) Start() error {
 
 func (s *Server) InitHandler() *chi.Mux {
 	handler := chi.NewRouter()
-	handler.With(s.middleWare).Get(pathStatus, s.HandleStatus)
-	handler.With(s.middleWare).Post(pathRegisterValidator, s.HandleRegistration)
-	handler.With(s.middleWare).Get(pathGetHeader, s.HandleGetHeader)
-	handler.With(s.middleWare).Post(pathGetPayload, s.HandleGetPayload)
+	handler.Get(pathStatus, s.HandleStatus)
+	handler.Post(pathRegisterValidator, s.HandleRegistration)
+	handler.Get(pathGetHeader, s.HandleGetHeader)
+	handler.Post(pathGetPayload, s.HandleGetPayload)
 	s.logger.Info("Init mev-relay-proxy")
 	return handler
 }
