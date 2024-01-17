@@ -74,6 +74,7 @@ func main() {
 		l.Warn("shutting down")
 		signal.Stop(shutdown)
 		cancel()
+		server.Stop()
 		close(exit)
 	}()
 
