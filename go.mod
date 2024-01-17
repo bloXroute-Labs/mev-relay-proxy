@@ -8,6 +8,7 @@ require (
 	github.com/bloXroute-Labs/relay-grpc v0.0.12
 	github.com/go-chi/chi/v5 v5.0.10
 	github.com/google/uuid v1.3.1
+	github.com/gorilla/mux v1.8.0
 	go.uber.org/zap v1.26.0
 	google.golang.org/grpc v1.60.1
 	google.golang.org/protobuf v1.31.0

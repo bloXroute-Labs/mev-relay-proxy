@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/mux"
 	"io"
 	"net/http"
 	"time"
@@ -61,20 +62,14 @@ func (s *Server) Start() error {
 	return err
 }
 
-func (s *Server) InitHandler() *chi.Mux {
-	handler := chi.NewRouter()
-	handler.Get(pathStatus, s.HandleStatus)
-	handler.Post(pathRegisterValidator, s.HandleRegistration)
-	handler.Get(pathGetHeader, s.HandleGetHeader)
-	handler.Post(pathGetPayload, s.HandleGetPayload)
+func (s *Server) InitHandler() http.Handler {
+	handler := mux.NewRouter()
+	handler.HandleFunc(pathStatus, s.HandleStatus).Methods(http.MethodGet)
+	handler.HandleFunc(pathRegisterValidator, s.HandleRegistration).Methods(http.MethodPost)
+	handler.HandleFunc(pathGetHeader, s.HandleGetHeader).Methods(http.MethodGet)
+	handler.HandleFunc(pathGetPayload, s.HandleGetPayload).Methods(http.MethodPost)
 	s.logger.Info("Init mev-relay-proxy")
 	return handler
-}
-
-func (s *Server) middleWare(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) Stop() {
