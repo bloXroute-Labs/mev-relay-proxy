@@ -16,8 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel/trace/noop"
-
 	"github.com/attestantio/go-builder-client/spec"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
 	"go.uber.org/zap"
@@ -63,7 +61,7 @@ func TestService_RegisterValidator(t *testing.T) {
 		t.Run(testName, func(t *testing.T) {
 			s := &Service{
 				logger:  zap.NewNop(),
-				clients: []*Client{{"", &mockRelayClient{RegisterValidatorFunc: tt.f}}},
+				clients: []*Client{{"", nil, &mockRelayClient{RegisterValidatorFunc: tt.f}}},
 			}
 			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", "")
 			if err == nil {
@@ -112,7 +110,6 @@ func TestService_getPayload(t *testing.T) {
 			s := &Service{
 				logger:  zap.NewNop(),
 				clients: []*Client{{RelayClient: &mockRelayClient{GetPayloadFunc: tt.f}}},
-				tracer:  noop.NewTracerProvider().Tracer(""),
 			}
 			got, _, err := s.GetPayload(context.Background(), time.Now(), nil, "")
 			if err == nil {
@@ -130,11 +127,11 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	l := zap.NewNop()
 	//l, _ := zap.NewDevelopment()
 	streams := []stream{
-		{Slot: uint64(66), ParentHash: "0x66", ProposerPubKey: "0x66", Value: new(big.Int).SetInt64(66666).Bytes()},
-		{Slot: uint64(66), ParentHash: "0x66", ProposerPubKey: "0x66", Value: new(big.Int).SetInt64(66668).Bytes()},
-		{Slot: uint64(66), ParentHash: "0x66", ProposerPubKey: "0x66", Value: new(big.Int).SetInt64(66669).Bytes(), Payload: []byte("{\"version\":\"capella\",\"data\":{\"message\":{\"header\":{\"parent_hash\":\"0xbd0ada39aca5fed393fa4bf80d45d4703e3a9aa3c0a09750879cb842f1bdfc58\",\"fee_recipient\":\"0x8dC847Af872947Ac18d5d63fA646EB65d4D99560\",\"state_root\":\"0x3047ac621434c21c527f38d676382fa10e402f742e6d47bc6e07e7a2c13fdf32\",\"receipts_root\":\"0xeaf609cff0ccedd82d3db9029455b5ce52f0d8f4b91977d9251db72bc73acf1e\",\"logs_bloom\":\"0x00310412002012002a001066840114452398001008403a4000eb341024000912221080280208300681509a0b80810070740ba236ca21371102118f89312c201653f2c03c4c009c9946a0401a5218c233c20d046090460801860442868c2610244900006086420ad0a008b28430000ac0700008e84028054400826812c09800c12a22b472491401c03040301502c100000027100d904c82e8342104e2e400808042e808402465080203811582a04808880602f610900043a000487036a08002009410c00210a21084004aa4108153430a060200a2408800190821849a5808e0084130004509222c47280a11808240800492421454021303414898f80415800774\",\"prev_randao\":\"0x21a739f58604430cef3e5c550a955bc5943bae4c3dae6a01672be878ae0a5e1b\",\"block_number\":\"10077336\",\"gas_limit\":\"30000000\",\"gas_used\":\"9696787\",\"timestamp\":\"1700496012\",\"extra_data\":\"0x506f776572656420627920626c6f58726f757465\",\"base_fee_per_gas\":\"11\",\"block_hash\":\"0xf4488a3b1fa59a3ce2e52a087ae3d7c93ff4a29f0a2df93a003b02902571cc54\",\"transactions_root\":\"0x9956dd9ece5082f2eab87c2b5d22f7ed6cf7c865cc461c20ee71bee07b031368\",\"withdrawals_root\":\"0x2f2680e6bca4d97e9a776567779f7a290766634e1fc6a0fce75ceabe239240bb\"},\"value\":\"54788421837882049\",\"pubkey\":\"0x821f2a65afb70e7f2e820a925a9b4c80a159620582c1766b1b09729fec178b11ea22abb3a51f07b288be815a1a2ff516\"},\"signature\":\"0x8e7678fb099b1489ad5d0929d48d4c5839e09f8884bf3cbbf309a5d1032f723c5b599ac00d53c3bea7b5fc70f1ac53fd0f8e6692d18ec94b8565f9fa18dc393867b43400774968f6e0f1d40282764d64a5ef5897716a2e5f9e3b667f3e49c0fe\"}}")},
-		{Slot: uint64(77), ParentHash: "0x77", ProposerPubKey: "0x77", Value: new(big.Int).SetInt64(77777).Bytes()},
-		{Slot: uint64(88), ParentHash: "0x88", ProposerPubKey: "0x88", Value: new(big.Int).SetInt64(88888).Bytes()},
+		{Slot: uint64(66), BlockHash: "blockHash66", ParentHash: "0x66", ProposerPubKey: "0x66", Value: new(big.Int).SetInt64(66666).Bytes()},
+		{Slot: uint64(66), BlockHash: "blockHash66", ParentHash: "0x66", ProposerPubKey: "0x66", Value: new(big.Int).SetInt64(66668).Bytes()},
+		{Slot: uint64(66), BlockHash: "blockHash67", ParentHash: "0x66", ProposerPubKey: "0x66", Value: new(big.Int).SetInt64(66669).Bytes(), Payload: []byte("{\"version\":\"capella\",\"data\":{\"message\":{\"header\":{\"parent_hash\":\"0xbd0ada39aca5fed393fa4bf80d45d4703e3a9aa3c0a09750879cb842f1bdfc58\",\"fee_recipient\":\"0x8dC847Af872947Ac18d5d63fA646EB65d4D99560\",\"state_root\":\"0x3047ac621434c21c527f38d676382fa10e402f742e6d47bc6e07e7a2c13fdf32\",\"receipts_root\":\"0xeaf609cff0ccedd82d3db9029455b5ce52f0d8f4b91977d9251db72bc73acf1e\",\"logs_bloom\":\"0x00310412002012002a001066840114452398001008403a4000eb341024000912221080280208300681509a0b80810070740ba236ca21371102118f89312c201653f2c03c4c009c9946a0401a5218c233c20d046090460801860442868c2610244900006086420ad0a008b28430000ac0700008e84028054400826812c09800c12a22b472491401c03040301502c100000027100d904c82e8342104e2e400808042e808402465080203811582a04808880602f610900043a000487036a08002009410c00210a21084004aa4108153430a060200a2408800190821849a5808e0084130004509222c47280a11808240800492421454021303414898f80415800774\",\"prev_randao\":\"0x21a739f58604430cef3e5c550a955bc5943bae4c3dae6a01672be878ae0a5e1b\",\"block_number\":\"10077336\",\"gas_limit\":\"30000000\",\"gas_used\":\"9696787\",\"timestamp\":\"1700496012\",\"extra_data\":\"0x506f776572656420627920626c6f58726f757465\",\"base_fee_per_gas\":\"11\",\"block_hash\":\"0xf4488a3b1fa59a3ce2e52a087ae3d7c93ff4a29f0a2df93a003b02902571cc54\",\"transactions_root\":\"0x9956dd9ece5082f2eab87c2b5d22f7ed6cf7c865cc461c20ee71bee07b031368\",\"withdrawals_root\":\"0x2f2680e6bca4d97e9a776567779f7a290766634e1fc6a0fce75ceabe239240bb\"},\"value\":\"54788421837882049\",\"pubkey\":\"0x821f2a65afb70e7f2e820a925a9b4c80a159620582c1766b1b09729fec178b11ea22abb3a51f07b288be815a1a2ff516\"},\"signature\":\"0x8e7678fb099b1489ad5d0929d48d4c5839e09f8884bf3cbbf309a5d1032f723c5b599ac00d53c3bea7b5fc70f1ac53fd0f8e6692d18ec94b8565f9fa18dc393867b43400774968f6e0f1d40282764d64a5ef5897716a2e5f9e3b667f3e49c0fe\"}}")},
+		{Slot: uint64(77), BlockHash: "blockHash77", ParentHash: "0x77", ProposerPubKey: "0x77", Value: new(big.Int).SetInt64(77777).Bytes()},
+		{Slot: uint64(88), BlockHash: "blockHash88", ParentHash: "0x88", ProposerPubKey: "0x88", Value: new(big.Int).SetInt64(88888).Bytes()},
 	}
 	// Set up your mock gRPC server and client.
 	srv := grpc.NewServer()
@@ -154,11 +151,11 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 		t.Fatal("Failed to create client connection", zap.Error(err))
 	}
 	defer conn.Close()
-
 	relayClient := relaygrpc.NewRelayClient(conn)
-	service := NewService(l, noop.NewTracerProvider().Tracer(""), "test", "", "", &Client{lis.Addr().String(), relayClient})
+	c := &Client{lis.Addr().String(), conn, relayClient}
+	service := NewService(l, nil, "test", "", "", c)
 
-	go service.StreamHeader(context.Background(), relayClient)
+	go service.StreamHeader(ctx, c)
 
 	server := &Server{svc: service, logger: zap.NewNop(), listenAddress: "127.0.0.1:9090"}
 	go server.Start()
@@ -182,7 +179,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 		"If key present in the header map": {
 			in:      stream{Slot: uint64(66), ParentHash: "0x66", ProposerPubKey: "0x66"},
 			args:    streams,
-			want:    json.RawMessage([]byte("{\"version\":\"capella\",\"data\":{\"message\":{\"header\":{\"parent_hash\":\"0xbd0ada39aca5fed393fa4bf80d45d4703e3a9aa3c0a09750879cb842f1bdfc58\",\"fee_recipient\":\"0x8dC847Af872947Ac18d5d63fA646EB65d4D99560\",\"state_root\":\"0x3047ac621434c21c527f38d676382fa10e402f742e6d47bc6e07e7a2c13fdf32\",\"receipts_root\":\"0xeaf609cff0ccedd82d3db9029455b5ce52f0d8f4b91977d9251db72bc73acf1e\",\"logs_bloom\":\"0x00310412002012002a001066840114452398001008403a4000eb341024000912221080280208300681509a0b80810070740ba236ca21371102118f89312c201653f2c03c4c009c9946a0401a5218c233c20d046090460801860442868c2610244900006086420ad0a008b28430000ac0700008e84028054400826812c09800c12a22b472491401c03040301502c100000027100d904c82e8342104e2e400808042e808402465080203811582a04808880602f610900043a000487036a08002009410c00210a21084004aa4108153430a060200a2408800190821849a5808e0084130004509222c47280a11808240800492421454021303414898f80415800774\",\"prev_randao\":\"0x21a739f58604430cef3e5c550a955bc5943bae4c3dae6a01672be878ae0a5e1b\",\"block_number\":\"10077336\",\"gas_limit\":\"30000000\",\"gas_used\":\"9696787\",\"timestamp\":\"1700496012\",\"extra_data\":\"0x506f776572656420627920626c6f58726f757465\",\"base_fee_per_gas\":\"11\",\"block_hash\":\"0xf4488a3b1fa59a3ce2e52a087ae3d7c93ff4a29f0a2df93a003b02902571cc54\",\"transactions_root\":\"0x9956dd9ece5082f2eab87c2b5d22f7ed6cf7c865cc461c20ee71bee07b031368\",\"withdrawals_root\":\"0x2f2680e6bca4d97e9a776567779f7a290766634e1fc6a0fce75ceabe239240bb\"},\"value\":\"54788421837882049\",\"pubkey\":\"0x821f2a65afb70e7f2e820a925a9b4c80a159620582c1766b1b09729fec178b11ea22abb3a51f07b288be815a1a2ff516\"},\"signature\":\"0x8e7678fb099b1489ad5d0929d48d4c5839e09f8884bf3cbbf309a5d1032f723c5b599ac00d53c3bea7b5fc70f1ac53fd0f8e6692d18ec94b8565f9fa18dc393867b43400774968f6e0f1d40282764d64a5ef5897716a2e5f9e3b667f3e49c0fe\"}}")),
+			want:    json.RawMessage("{\"version\":\"capella\",\"data\":{\"message\":{\"header\":{\"parent_hash\":\"0xbd0ada39aca5fed393fa4bf80d45d4703e3a9aa3c0a09750879cb842f1bdfc58\",\"fee_recipient\":\"0x8dC847Af872947Ac18d5d63fA646EB65d4D99560\",\"state_root\":\"0x3047ac621434c21c527f38d676382fa10e402f742e6d47bc6e07e7a2c13fdf32\",\"receipts_root\":\"0xeaf609cff0ccedd82d3db9029455b5ce52f0d8f4b91977d9251db72bc73acf1e\",\"logs_bloom\":\"0x00310412002012002a001066840114452398001008403a4000eb341024000912221080280208300681509a0b80810070740ba236ca21371102118f89312c201653f2c03c4c009c9946a0401a5218c233c20d046090460801860442868c2610244900006086420ad0a008b28430000ac0700008e84028054400826812c09800c12a22b472491401c03040301502c100000027100d904c82e8342104e2e400808042e808402465080203811582a04808880602f610900043a000487036a08002009410c00210a21084004aa4108153430a060200a2408800190821849a5808e0084130004509222c47280a11808240800492421454021303414898f80415800774\",\"prev_randao\":\"0x21a739f58604430cef3e5c550a955bc5943bae4c3dae6a01672be878ae0a5e1b\",\"block_number\":\"10077336\",\"gas_limit\":\"30000000\",\"gas_used\":\"9696787\",\"timestamp\":\"1700496012\",\"extra_data\":\"0x506f776572656420627920626c6f58726f757465\",\"base_fee_per_gas\":\"11\",\"block_hash\":\"0xf4488a3b1fa59a3ce2e52a087ae3d7c93ff4a29f0a2df93a003b02902571cc54\",\"transactions_root\":\"0x9956dd9ece5082f2eab87c2b5d22f7ed6cf7c865cc461c20ee71bee07b031368\",\"withdrawals_root\":\"0x2f2680e6bca4d97e9a776567779f7a290766634e1fc6a0fce75ceabe239240bb\"},\"value\":\"54788421837882049\",\"pubkey\":\"0x821f2a65afb70e7f2e820a925a9b4c80a159620582c1766b1b09729fec178b11ea22abb3a51f07b288be815a1a2ff516\"},\"signature\":\"0x8e7678fb099b1489ad5d0929d48d4c5839e09f8884bf3cbbf309a5d1032f723c5b599ac00d53c3bea7b5fc70f1ac53fd0f8e6692d18ec94b8565f9fa18dc393867b43400774968f6e0f1d40282764d64a5ef5897716a2e5f9e3b667f3e49c0fe\"}}"),
 			wantErr: false,
 		},
 	}
@@ -327,6 +324,7 @@ type stream struct {
 	ProposerPubKey string
 	Value          []byte
 	Payload        []byte
+	BlockHash      string
 }
 
 type mockRelayClient struct {

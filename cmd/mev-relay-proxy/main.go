@@ -29,7 +29,6 @@ var (
 	// Included in the build process
 	_BuildVersion string
 	_AppName      = "mev-relay-proxy"
-	_SecretToken  string //lint:ignore U1000 Ignore unused variable
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
 
@@ -46,6 +45,7 @@ var (
 func main() {
 	flag.Parse()
 	l := newLogger(_AppName, _BuildVersion)
+	defer l.Sync()
 	ctx, cancel := context.WithCancel(context.Background())
 	// init client connection
 	var (
@@ -54,11 +54,11 @@ func main() {
 	)
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
-		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 		if err != nil {
 			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
 		}
-		clients = append(clients, &api.Client{URL: url, RelayClient: relaygrpc.NewRelayClient(conn)})
+		clients = append(clients, &api.Client{URL: url, Conn: conn, RelayClient: relaygrpc.NewRelayClient(conn)})
 		conns = append(conns, conn)
 	}
 	defer func() {
@@ -98,6 +98,7 @@ func main() {
 		l.Warn("shutting down")
 		signal.Stop(shutdown)
 		cancel()
+		server.Stop()
 		close(exit)
 	}()
 
@@ -105,7 +106,7 @@ func main() {
 	go func(_ctx context.Context) {
 		wg := new(sync.WaitGroup)
 		svc.WrapStreamHeaders(_ctx, wg)
-	}(context.Background())
+	}(ctx)
 	if err := server.Start(); err != nil {
 		l.Fatal("failed to start mev-relay-proxy server", zap.Error(err))
 	}
