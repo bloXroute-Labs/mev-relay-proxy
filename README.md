@@ -85,3 +85,4 @@ Run MEV-Boost pointed at a mainnet regulated relay and relay-proxy running as lo
 ``./mev-boost -relay-check -relays http://0xb0b07cd0abef743db4260b0ed50619cf6ad4d82064cb4fbec9d3ec530f7c5e6793d9f286c4e082c0244ffb9f2658fe88@bloxroute.regulated.blxrbdn.com,http://0xb0b07cd0abef743db4260b0ed50619cf6ad4d82064cb4fbec9d3ec530f7c5e6793d9f286c4e082c0244ffb9f2658fe88@relay-proxy.blxrbdn.com:18551 &
 ``
 ### Note
+Make sure to use http instead of https while configuring mev-boost relays flag
