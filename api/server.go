@@ -104,7 +104,7 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{}`)
+	_, _ = w.Write([]byte(`{}`))
 
 	defer span.End()
 }
