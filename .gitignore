@@ -3,3 +3,6 @@
 
 # Ignore build folder
 bloxroute/
+
+# Ignore swp files
+*.swp
