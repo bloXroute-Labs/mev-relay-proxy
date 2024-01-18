@@ -41,6 +41,7 @@ var (
 func main() {
 	flag.Parse()
 	l := newLogger(_AppName, _BuildVersion)
+	defer l.Sync()
 	ctx, cancel := context.WithCancel(context.Background())
 	// init client connection
 	var (
@@ -49,11 +50,11 @@ func main() {
 	)
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
-		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 		if err != nil {
 			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
 		}
-		clients = append(clients, &api.Client{URL: url, RelayClient: relaygrpc.NewRelayClient(conn)})
+		clients = append(clients, &api.Client{URL: url, Conn: conn, RelayClient: relaygrpc.NewRelayClient(conn)})
 		conns = append(conns, conn)
 	}
 	defer func() {
@@ -73,6 +74,7 @@ func main() {
 		l.Warn("shutting down")
 		signal.Stop(shutdown)
 		cancel()
+		server.Stop()
 		close(exit)
 	}()
 
@@ -87,6 +89,7 @@ func main() {
 	<-exit
 }
 func newLogger(appName, version string) *zap.Logger {
+
 	logLevel := zap.DebugLevel
 	var zapCore zapcore.Core
 	level := zap.NewAtomicLevel()

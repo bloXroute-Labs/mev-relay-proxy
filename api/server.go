@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/mux"
 	"io"
 	"net/http"
 	"time"
@@ -49,10 +50,10 @@ func (s *Server) Start() error {
 	s.server = &http.Server{
 		Addr:              s.listenAddress,
 		Handler:           s.InitHandler(),
-		ReadTimeout:       15 * time.Second,
-		ReadHeaderTimeout: 6 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		ReadTimeout:       0,
+		ReadHeaderTimeout: 0,
+		WriteTimeout:      0,
+		IdleTimeout:       10 * time.Second,
 	}
 	err := s.server.ListenAndServe()
 	if err == http.ErrServerClosed {
@@ -61,20 +62,14 @@ func (s *Server) Start() error {
 	return err
 }
 
-func (s *Server) InitHandler() *chi.Mux {
-	handler := chi.NewRouter()
-	handler.With(s.middleWare).Get(pathStatus, s.HandleStatus)
-	handler.With(s.middleWare).Post(pathRegisterValidator, s.HandleRegistration)
-	handler.With(s.middleWare).Get(pathGetHeader, s.HandleGetHeader)
-	handler.With(s.middleWare).Post(pathGetPayload, s.HandleGetPayload)
+func (s *Server) InitHandler() http.Handler {
+	handler := mux.NewRouter()
+	handler.HandleFunc(pathStatus, s.HandleStatus).Methods(http.MethodGet)
+	handler.HandleFunc(pathRegisterValidator, s.HandleRegistration).Methods(http.MethodPost)
+	handler.HandleFunc(pathGetHeader, s.HandleGetHeader).Methods(http.MethodGet)
+	handler.HandleFunc(pathGetPayload, s.HandleGetPayload).Methods(http.MethodPost)
 	s.logger.Info("Init mev-relay-proxy")
 	return handler
-}
-
-func (s *Server) middleWare(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) Stop() {
@@ -86,7 +81,7 @@ func (s *Server) Stop() {
 func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{}`)
+	_, _ = w.Write([]byte(`{}`))
 }
 
 func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
