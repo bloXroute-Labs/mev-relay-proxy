@@ -76,12 +76,6 @@ func (s *Server) InitHandler() *chi.Mux {
 	return handler
 }
 
-func (s *Server) middleWare(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (s *Server) Stop() {
 	if s.server != nil {
 		_ = s.server.Shutdown(context.Background())
