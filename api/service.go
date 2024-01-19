@@ -34,12 +34,12 @@ type IService interface {
 	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error)
 }
 type Service struct {
-	logger  *zap.Logger
-	version string // build version
-	headers *syncmap.SyncMap[string, []*Header]
-	clients []*Client
-	//TODO: add flag to receive node id
-	nodeID string // UUID
+	logger         *zap.Logger
+	version        string // build version
+	headers        *syncmap.SyncMap[string, []*Header]
+	clients        []*Client
+	nodeIDReceived string // UUID
+	nodeID         string // UUID
 	//slotCleanUpCh chan uint64
 	authKey      string
 	isStreamOpen bool
@@ -57,14 +57,14 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, version string, nodeID string, authKey string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, version string, nodeIDReceived string, authKey string, clients ...*Client) *Service {
 	return &Service{
-		logger:  logger,
-		version: version,
-		clients: clients,
-		headers: syncmap.NewStringMapOf[[]*Header](),
-		nodeID:  nodeID,
-		authKey: authKey,
+		logger:         logger,
+		version:        version,
+		clients:        clients,
+		headers:        syncmap.NewStringMapOf[[]*Header](),
+		nodeIDReceived: nodeIDReceived,
+		authKey:        authKey,
 	}
 }
 
@@ -156,7 +156,7 @@ func (s *Service) handleStream(ctx context.Context, client *Client) {
 
 func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.StreamHeaderResponse, error) {
 	id := uuid.NewString()
-	s.nodeID = fmt.Sprintf("%v-%v-%v", s.nodeID, id, time.Now().UTC().String())
+	s.nodeID = fmt.Sprintf("%v-%v-%v", s.nodeIDReceived, id, time.Now().UTC().Format("15:04:05.999999999"))
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:   id,
