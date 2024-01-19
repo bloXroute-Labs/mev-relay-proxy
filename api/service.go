@@ -77,15 +77,6 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.Time("receivedAt", receivedAt),
 	)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	req := &relaygrpc.RegisterValidatorRequest{
-		ReqId:      id,
-		Payload:    payload,
-		ClientIp:   clientIP,
-		Version:    s.version,
-		ReceivedAt: timestamppb.New(receivedAt),
-		AuthHeader: authHeader,
-	}
-
 	var (
 		errChan  = make(chan error, len(s.clients))
 		respChan = make(chan *relaygrpc.RegisterValidatorResponse, len(s.clients))
@@ -95,7 +86,15 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		go func(c *Client) {
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
-			req.NodeId = c.nodeID
+			req := &relaygrpc.RegisterValidatorRequest{
+				ReqId:      id,
+				Payload:    payload,
+				ClientIp:   clientIP,
+				Version:    s.version,
+				NodeId:     c.nodeID,
+				ReceivedAt: timestamppb.New(receivedAt),
+				AuthHeader: authHeader,
+			}
 			out, err := c.RegisterValidator(clientCtx, req)
 			if err != nil {
 				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
@@ -155,7 +154,7 @@ func (s *Service) handleStream(ctx context.Context, client *Client) {
 
 func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.StreamHeaderResponse, error) {
 	id := uuid.NewString()
-	client.nodeID = fmt.Sprintf("%v-%v-%v", s.nodeID, id, time.Now().UTC().Format("15:04:05.999999999"))
+	client.nodeID = fmt.Sprintf("%v-%v-%v-%v", s.nodeID, client.URL, id, time.Now().UTC().Format("15:04:05.999999999"))
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:   id,
