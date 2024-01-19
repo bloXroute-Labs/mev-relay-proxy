@@ -112,7 +112,7 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
-	authHeader := r.Header.Get("authorization")
+	authHeader := getAuth(r)
 	bodyBytes, err := io.ReadAll(r.Body)
 
 	parentSpan := trace.SpanFromContext(r.Context())
