@@ -175,6 +175,11 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			close(done)
 		})
 	}
+
+	// Periodically clean up headers
+	expiredKeyCh := make(chan string, 100)
+	go s.cleanUpExpiredHeaders(expiredKeyCh)
+
 	go func() {
 		select {
 		case <-stream.Context().Done():
@@ -252,10 +257,22 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		h := make([]*Header, 0)
 		h = append(h, v)
 		s.headers.Store(k, h)
+		// Send the key to chan for expiration after 1 minute to clean-up
+		go func(key string) {
+			<-time.After(time.Minute)
+			expiredKeyCh <- key
+		}(k)
 	}
 	<-done
 	s.logger.Warn("closing connection", zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 	return nil, nil
+}
+
+func (s *Service) cleanUpExpiredHeaders(expiredKeyCh <-chan string) {
+	for k := range expiredKeyCh {
+		s.logger.Info("cleanup old slot", zap.String("key", k))
+		s.headers.Delete(k)
+	}
 }
 
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
@@ -268,16 +285,6 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		zap.String("key", k),
 		zap.String("reqID", id),
 	)
-	defer func() {
-		go func() {
-			// cleanup old slots/headers
-			time.AfterFunc(time.Second*30, func() {
-				s.logger.Info("cleanup old slot", zap.String("key", k))
-				s.headers.Delete(k)
-			})
-		}()
-	}()
-
 	val := new(big.Int)
 	index := 0
 	//TODO: currently storing all the header values for the particular slot
