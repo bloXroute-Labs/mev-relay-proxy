@@ -54,10 +54,10 @@ func (s *Server) Start() error {
 	s.server = &http.Server{
 		Addr:              s.listenAddress,
 		Handler:           s.InitHandler(),
-		ReadTimeout:       1500 * time.Millisecond,
-		ReadHeaderTimeout: 600 * time.Millisecond,
-		WriteTimeout:      3 * time.Second,
-		IdleTimeout:       3 * time.Second,
+		ReadTimeout:       0,
+		ReadHeaderTimeout: 0,
+		WriteTimeout:      0,
+		IdleTimeout:       10 * time.Second,
 	}
 	err := s.server.ListenAndServe()
 	if err == http.ErrServerClosed {
@@ -68,18 +68,12 @@ func (s *Server) Start() error {
 
 func (s *Server) InitHandler() *chi.Mux {
 	handler := chi.NewRouter()
-	handler.With(s.middleWare).Get(pathStatus, s.HandleStatus)
-	handler.With(s.middleWare).Post(pathRegisterValidator, s.HandleRegistration)
-	handler.With(s.middleWare).Get(pathGetHeader, s.HandleGetHeader)
-	handler.With(s.middleWare).Post(pathGetPayload, s.HandleGetPayload)
+	handler.Get(pathStatus, s.HandleStatus)
+	handler.Post(pathRegisterValidator, s.HandleRegistration)
+	handler.Get(pathGetHeader, s.HandleGetHeader)
+	handler.Post(pathGetPayload, s.HandleGetPayload)
 	s.logger.Info("Init mev-relay-proxy")
 	return handler
-}
-
-func (s *Server) middleWare(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) Stop() {
@@ -104,7 +98,7 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{}`)
+	_, _ = w.Write([]byte(`{}`))
 
 	defer span.End()
 }

@@ -12,7 +12,7 @@ v:
 
 .PHONY: build
 build:
-	go build -ldflags "-X main._BuildVersion=${VERSION}" -v -o ${APP} ${MAIN_FILE}
+	go build -ldflags "-X main._BuildVersion=${VERSION}" -v -o ${REPO} ${MAIN_FILE}
 
 .PHONY: test
 test:
