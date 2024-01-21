@@ -259,7 +259,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		s.headers.Store(k, h)
 		// Send the key to chan for expiration after 1 minute to clean-up
 		go func(key string) {
-			time.Sleep(time.Second * 1)
+			<-time.After(time.Minute)
 			expiredKeyCh <- key
 		}(k)
 	}
