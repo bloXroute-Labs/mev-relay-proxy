@@ -45,6 +45,7 @@ type Service struct {
 	nodeID  string // UUID
 	//slotCleanUpCh chan uint64
 	authKey      string
+	secretToken  string
 	isStreamOpen bool
 	tracer       trace.Tracer
 }
@@ -62,15 +63,16 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, secretToken string, clients ...*Client) *Service {
 	return &Service{
-		logger:  logger,
-		version: version,
-		clients: clients,
-		headers: syncmap.NewStringMapOf[[]*Header](),
-		nodeID:  nodeID,
-		authKey: authKey,
-		tracer:  tracer,
+		logger:      logger,
+		version:     version,
+		clients:     clients,
+		headers:     syncmap.NewStringMapOf[[]*Header](),
+		nodeID:      nodeID,
+		authKey:     authKey,
+		secretToken: secretToken,
+		tracer:      tracer,
 	}
 }
 
@@ -371,7 +373,8 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
 	spanStoringHeader.End()
-	return nil, k, toErrorResp(http.StatusNoContent, "", id, fmt.Sprintf("header value is not present for the requested key %v", k), clientIP)
+  msg := fmt.Sprintf("header value is not present for the requested key %v", k)
+	return nil, k, toErrorResp(http.StatusNoContent, msg, id, msg, clientIP)
 }
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {

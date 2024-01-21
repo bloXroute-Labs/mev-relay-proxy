@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"gotest.tools/assert"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func TestService_RegisterValidator(t *testing.T) {
@@ -62,6 +63,7 @@ func TestService_RegisterValidator(t *testing.T) {
 			s := &Service{
 				logger:  zap.NewNop(),
 				clients: []*Client{{"", "", nil, &mockRelayClient{RegisterValidatorFunc: tt.f}}},
+        tracer: noop.NewTracerProvider().Tracer("test"),
 			}
 			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", "")
 			if err == nil {
@@ -110,6 +112,7 @@ func TestService_getPayload(t *testing.T) {
 			s := &Service{
 				logger:  zap.NewNop(),
 				clients: []*Client{{RelayClient: &mockRelayClient{GetPayloadFunc: tt.f}}},
+        tracer: noop.NewTracerProvider().Tracer("test"),
 			}
 			got, _, err := s.GetPayload(context.Background(), time.Now(), nil, "")
 			if err == nil {
@@ -153,11 +156,11 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	defer conn.Close()
 	relayClient := relaygrpc.NewRelayClient(conn)
 	c := &Client{lis.Addr().String(), "", conn, relayClient}
-	service := NewService(l, nil, "test", "", "", c)
+	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "4nDpR2sVxYz1BtU6wFqGhJkLp3Tm5ZoX", c)
 
 	go service.StreamHeader(ctx, c)
 
-	server := &Server{svc: service, logger: zap.NewNop(), listenAddress: "127.0.0.1:9090"}
+  server := &Server{svc: service, logger: zap.NewNop(), listenAddress: "127.0.0.1:9090", tracer: noop.NewTracerProvider().Tracer("test")}
 	go server.Start()
 	defer server.Stop()
 
