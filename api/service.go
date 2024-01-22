@@ -373,7 +373,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
 	spanStoringHeader.End()
-  msg := fmt.Sprintf("header value is not present for the requested key %v", k)
+	msg := fmt.Sprintf("header value is not present for the requested key %v", k)
 	return nil, k, toErrorResp(http.StatusNoContent, msg, id, msg, clientIP)
 }
 

@@ -23,14 +23,17 @@ test:
 test-race:
 	go test -race ./...
 
+.PHONY: test-show-failed
+test-show-failed:
+	go test -json -v -timeout 60s ./... 2>&1 | tee /tmp/gotest.log | gotestfmt --hide all
+
 .PHONY: fmt
 fmt:
 	gofmt -s -w .
 
 .PHONY: lint
 lint:
-	go vet ./...
-	staticcheck ./...
+	golangci-lint run --timeout=5m
 
 .PHONY: build-for-docker
 build-for-docker:

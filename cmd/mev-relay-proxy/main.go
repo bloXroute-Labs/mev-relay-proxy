@@ -47,7 +47,13 @@ var (
 func main() {
 	flag.Parse()
 	l := newLogger(_AppName, _BuildVersion)
-	defer l.Sync()
+
+	defer func() {
+		if err := l.Sync(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error syncing log: %v\n", err)
+		}
+	}()
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	keepaliveOpts := grpc.WithKeepaliveParams(keepalive.ClientParameters{
