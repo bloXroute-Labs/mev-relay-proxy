@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/zap"
 	"gotest.tools/assert"
 )
@@ -83,7 +84,7 @@ func TestServer_HandleRegistration(t *testing.T) {
 				t.Fatal(err)
 			}
 			rr := httptest.NewRecorder()
-			server := &Server{svc: tc.mockService, logger: zap.NewNop()}
+			server := &Server{svc: tc.mockService, logger: zap.NewNop(), tracer: noop.NewTracerProvider().Tracer("test")}
 			server.HandleRegistration(rr, req)
 
 			assert.Equal(t, rr.Code, tc.expectedCode)
@@ -142,7 +143,7 @@ func TestServer_HandleGetHeader(t *testing.T) {
 				t.Fatal(err)
 			}
 			rr := httptest.NewRecorder()
-			server := &Server{svc: tc.mockService, logger: zap.NewNop()}
+			server := &Server{svc: tc.mockService, logger: zap.NewNop(), tracer: noop.NewTracerProvider().Tracer("test")}
 
 			server.HandleGetHeader(rr, req)
 
@@ -196,7 +197,7 @@ func TestServer_HandleGetPayload(t *testing.T) {
 				t.Fatal(err)
 			}
 			rr := httptest.NewRecorder()
-			server := &Server{svc: tc.mockService, logger: zap.NewNop()}
+			server := &Server{svc: tc.mockService, logger: zap.NewNop(), tracer: noop.NewTracerProvider().Tracer("test")}
 			server.HandleGetPayload(rr, req)
 
 			assert.Equal(t, rr.Code, tc.expectedCode)

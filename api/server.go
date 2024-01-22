@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/bloXroute-Labs/mev-relay-proxy/stats"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/go-chi/chi/v5"
 
 	"go.uber.org/zap"
@@ -35,16 +37,16 @@ type Server struct {
 	svc            IService
 	listenAddress  string
 	getHeaderDelay int
-	fluentd        stats.Stats
+	tracer         trace.Tracer
 }
 
-func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, fluentd stats.Stats) *Server {
+func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, tracer trace.Tracer) *Server {
 	return &Server{
 		logger:         logger,
 		svc:            svc,
 		listenAddress:  listenAddress,
 		getHeaderDelay: getHeaderDelay,
-		fluentd:        fluentd,
+		tracer:         tracer,
 	}
 }
 
@@ -52,10 +54,10 @@ func (s *Server) Start() error {
 	s.server = &http.Server{
 		Addr:              s.listenAddress,
 		Handler:           s.InitHandler(),
-		ReadTimeout:       1500 * time.Millisecond,
-		ReadHeaderTimeout: 600 * time.Millisecond,
-		WriteTimeout:      3 * time.Second,
-		IdleTimeout:       3 * time.Second,
+		ReadTimeout:       0,
+		ReadHeaderTimeout: 0,
+		WriteTimeout:      0,
+		IdleTimeout:       10 * time.Second,
 	}
 	err := s.server.ListenAndServe()
 	if err == http.ErrServerClosed {
@@ -66,18 +68,12 @@ func (s *Server) Start() error {
 
 func (s *Server) InitHandler() *chi.Mux {
 	handler := chi.NewRouter()
-	handler.With(s.middleWare).Get(pathStatus, s.HandleStatus)
-	handler.With(s.middleWare).Post(pathRegisterValidator, s.HandleRegistration)
-	handler.With(s.middleWare).Get(pathGetHeader, s.HandleGetHeader)
-	handler.With(s.middleWare).Post(pathGetPayload, s.HandleGetPayload)
+	handler.Get(pathStatus, s.HandleStatus)
+	handler.Post(pathRegisterValidator, s.HandleRegistration)
+	handler.Get(pathGetHeader, s.HandleGetHeader)
+	handler.Post(pathGetPayload, s.HandleGetPayload)
 	s.logger.Info("Init mev-relay-proxy")
 	return handler
-}
-
-func (s *Server) middleWare(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) Stop() {
@@ -87,26 +83,59 @@ func (s *Server) Stop() {
 }
 
 func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
+	parentSpan := trace.SpanFromContext(req.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+
+	parentSpan.SetAttributes(
+		attribute.String("req_id", "req_id"),
+		attribute.String("blxr_message", "blxr_message"),
+		attribute.String("client_ip", "client_ip"),
+		attribute.String("resp_message", "resp_message"),
+		attribute.Int("resp_code", 200),
+	)
+
+	_, span := s.tracer.Start(parentSpanCtx, "HandleStatus")
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{}`)
+	_, _ = w.Write([]byte(`{}`))
+
+	defer span.End()
 }
 
 func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
-	clientIP := GetIPXForwardedFor(r, s.fluentd)
-	authHeader := r.Header.Get("authorization")
+	clientIP := GetIPXForwardedFor(r)
+	authHeader := getAuth(r)
 	bodyBytes, err := io.ReadAll(r.Body)
+
+	parentSpan := trace.SpanFromContext(r.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+
+	parentSpan.SetAttributes(
+		attribute.String("req_id", "req_id"),
+		attribute.String("blxr_message", "blxr_message"),
+		attribute.String("client_ip", "client_ip"),
+		attribute.String("resp_message", "resp_message"),
+		attribute.Int("resp_code", 200),
+	)
+
+	_, span := s.tracer.Start(parentSpanCtx, "HandleRegistration")
+
 	if err != nil {
-		respondError(registration, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "could not read registration", ""), s.logger, nil)
+		respondError(registration, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "could not read registration", ""), s.logger, nil, s.tracer)
 		return
 	}
+
 	out, metaData, err := s.svc.RegisterValidator(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
 	if err != nil {
-		respondError(registration, w, err, s.logger, metaData)
+		respondError(registration, w, err, s.logger, metaData, s.tracer)
 		return
 	}
-	respondOK(registration, w, out, s.logger, metaData)
+
+	defer span.End()
+
+	respondOK(registration, w, out, s.logger, metaData, s.tracer)
 }
 
 func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
@@ -114,49 +143,109 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	slot := chi.URLParam(r, "slot")
 	parentHash := chi.URLParam(r, "parent_hash")
 	pubKey := chi.URLParam(r, "pubkey")
-	clientIP := GetIPXForwardedFor(r, s.fluentd)
+	clientIP := GetIPXForwardedFor(r)
+
+	parentSpan := trace.SpanFromContext(r.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+
+	parentSpan.SetAttributes(
+		attribute.String("req_id", "req_id"),
+		attribute.String("blxr_message", "blxr_message"),
+		attribute.String("client_ip", "client_ip"),
+		attribute.String("resp_message", "resp_message"),
+		attribute.Int("resp_code", 200),
+	)
+
+	_, span := s.tracer.Start(parentSpanCtx, "HandleGetHeader")
+
 	<-time.After(time.Millisecond * time.Duration(s.getHeaderDelay))
 	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey)
 	if err != nil {
-		respondError(getHeader, w, err, s.logger, metaData)
+		respondError(getHeader, w, err, s.logger, metaData, s.tracer)
 		return
 	}
-	respondOK(getHeader, w, out, s.logger, metaData)
+
+	defer span.End()
+
+	respondOK(getHeader, w, out, s.logger, metaData, s.tracer)
 }
 
 func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
-	clientIP := GetIPXForwardedFor(r, s.fluentd)
+	clientIP := GetIPXForwardedFor(r)
+
+	parentSpan := trace.SpanFromContext(r.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+
+	parentSpan.SetAttributes(
+		attribute.String("req_id", "req_id"),
+		attribute.String("blxr_message", "blxr_message"),
+		attribute.String("client_ip", "client_ip"),
+		attribute.String("resp_message", "resp_message"),
+		attribute.Int("resp_code", 200),
+	)
+
+	_, span := s.tracer.Start(parentSpanCtx, "HandleGetPayload")
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "could not read getPayload", ""), s.logger, nil)
+		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "could not read getPayload", ""), s.logger, nil, s.tracer)
 		return
 	}
 	out, metaData, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP)
 	if err != nil {
-		respondError(getPayload, w, err, s.logger, metaData)
+		respondError(getPayload, w, err, s.logger, metaData, s.tracer)
 		return
 	}
-	respondOK(getPayload, w, out, s.logger, metaData)
+
+	defer span.End()
+
+	respondOK(getPayload, w, out, s.logger, metaData, s.tracer)
 }
 
-func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logger, metaData any) {
+func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logger, metaData any, tracer trace.Tracer) {
+
+	ctx, parentSpan := tracer.Start(context.Background(), "respondOK-main")
+	defer parentSpan.End()
+
+	_, childSpan := tracer.Start(ctx, "respondOK")
+	childSpan.SetAttributes(
+		attribute.String("req_id", "req_id"),
+		attribute.String("blxr_message", "blxr_message"),
+		attribute.String("client_ip", "client_ip"),
+		attribute.String("resp_message", "resp_message"),
+		attribute.Int("resp_code", 200),
+	)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Error("couldn't write OK response", zap.Error(err))
 		http.Error(w, "", http.StatusInternalServerError)
+		childSpan.End()
 		return
 	}
 	var meta string
 	if metaData != nil {
 		meta = metaData.(string)
 	}
+	childSpan.End()
 	log.Info(fmt.Sprintf("%s succeeded", method), zap.String("metaData", meta))
 }
 
-func respondError(method string, w http.ResponseWriter, err error, log *zap.Logger, metaData any) {
+func respondError(method string, w http.ResponseWriter, err error, log *zap.Logger, metaData any, tracer trace.Tracer) {
+	ctx, parentSpan := tracer.Start(context.Background(), "respondError-main")
+	defer parentSpan.End()
+
+	_, childSpan := tracer.Start(ctx, "respondError")
+	childSpan.SetAttributes(
+		attribute.String("req_id", "req_id"),
+		attribute.String("blxr_message", "blxr_message"),
+		attribute.String("client_ip", "client_ip"),
+		attribute.String("resp_message", "resp_message"),
+		attribute.Int("resp_code", 200),
+	)
+
 	resp := err.(*ErrorResp)
 	var meta string
 	if metaData != nil {
@@ -170,4 +259,5 @@ func respondError(method string, w http.ResponseWriter, err error, log *zap.Logg
 			http.Error(w, "", http.StatusInternalServerError)
 		}
 	}
+	childSpan.End()
 }

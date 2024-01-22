@@ -75,3 +75,13 @@ func GetIPXForwardedFor(r *http.Request, fluentDStats stats.Stats) string {
 	}, time.Now(), "utils.GetIPXForwardedFor")
 	return r.RemoteAddr
 }
+
+func getAuth(r *http.Request) string {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		return authHeader
+	}
+
+	// fallback to query param
+	return r.URL.Query().Get("auth")
+}

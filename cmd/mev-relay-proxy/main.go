@@ -10,6 +10,9 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/uptrace/uptrace-go/uptrace"
+	"go.opentelemetry.io/otel"
+
 	"github.com/bloXroute-Labs/mev-relay-proxy/api"
 	"github.com/bloXroute-Labs/mev-relay-proxy/stats"
 	"github.com/google/uuid"
@@ -21,12 +24,14 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 var (
 	// Included in the build process
 	_BuildVersion string
 	_AppName      = "mev-relay-proxy"
+	_SecretToken  string
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
 
@@ -35,15 +40,29 @@ var (
 	relayGRPCURL       = flag.String("relay", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "relay grpc URL")
 	relaysGRPCURL      = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
 	getHeaderDelayInMS = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
-	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
 	authKey            = flag.String("auth-key", "", "account authentication key")
-	fluentD            = flag.String("fluentd", "", "fluentd host:port")
+	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
+	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
 )
 
 func main() {
 	flag.Parse()
 	l := newLogger(_AppName, _BuildVersion)
+
+	defer func() {
+		if err := l.Sync(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error syncing log: %v\n", err)
+		}
+	}()
+
 	ctx, cancel := context.WithCancel(context.Background())
+
+	keepaliveOpts := grpc.WithKeepaliveParams(keepalive.ClientParameters{
+		Time:                time.Minute,
+		Timeout:             20 * time.Second,
+		PermitWithoutStream: true,
+	})
+
 	// init client connection
 	var (
 		clients []*api.Client
@@ -51,11 +70,11 @@ func main() {
 	)
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
-		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock(), keepaliveOpts)
 		if err != nil {
 			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
 		}
-		clients = append(clients, &api.Client{URL: url, RelayClient: relaygrpc.NewRelayClient(conn)})
+		clients = append(clients, &api.Client{URL: url, Conn: conn, RelayClient: relaygrpc.NewRelayClient(conn)})
 		conns = append(conns, conn)
 	}
 	defer func() {
@@ -64,12 +83,28 @@ func main() {
 		}
 	}()
 
-	// init fluentd
-	fluentDStats := stats.NewStats(*fluentD != "", *fluentD)
+	l.Info("starting mev-relay-proxy server", zap.String("listenAddr", *listenAddr), zap.String("uptraceDSN", *uptraceDSN), zap.String("nodeID", *nodeID), zap.String("authKey", *authKey), zap.String("relaysGRPCURL", *relaysGRPCURL), zap.Int("getHeaderDelayInMS", *getHeaderDelayInMS))
+
+	// Configure OpenTelemetry with sensible defaults.
+	uptrace.ConfigureOpentelemetry(
+		uptrace.WithDSN(*uptraceDSN),
+
+		uptrace.WithServiceName(_AppName),
+		uptrace.WithServiceVersion(_BuildVersion),
+		uptrace.WithDeploymentEnvironment(*nodeID),
+	)
+	// Send buffered spans and free resources.
+	defer func() {
+		if err := uptrace.Shutdown(ctx); err != nil {
+			l.Error("failed to shutdown uptrace", zap.Error(err))
+		}
+	}()
+
+	tracer := otel.Tracer("main")
 
 	// init service and server
-	svc := api.NewService(l, _BuildVersion, *nodeID, *authKey, fluentDStats, clients...)
-	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, stats.NewStats(*fluentD != "", *fluentD))
+	svc := api.NewService(l, tracer, _BuildVersion, *nodeID, *authKey, _SecretToken, clients...)
+	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer)
 
 	exit := make(chan struct{})
 	go func() {
@@ -79,6 +114,7 @@ func main() {
 		l.Warn("shutting down")
 		signal.Stop(shutdown)
 		cancel()
+		server.Stop()
 		close(exit)
 	}()
 
