@@ -65,6 +65,7 @@ func TestService_RegisterValidator(t *testing.T) {
 				logger:  zap.NewNop(),
 				clients: []*Client{{"", "", nil, &mockRelayClient{RegisterValidatorFunc: tt.f}}},
 				tracer:  noop.NewTracerProvider().Tracer("test"),
+				fluentD: fluentstats.NewStats(true, ""),
 			}
 			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", "")
 			if err == nil {
