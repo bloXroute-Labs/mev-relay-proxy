@@ -94,11 +94,6 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.Time("receivedAt", receivedAt),
 	)
 
-	//type Record struct {
-	// 	Type string      `json:"type"`
-	// 	Data interface{} `json:"data"`
-	// }
-
 	s.fluentD.LogToFluentD(fluentstats.Record{
 		Type: "BLXR-recvBndl-ss-submittedBundle",
 		Data: map[string]interface{}{

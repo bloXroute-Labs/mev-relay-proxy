@@ -10,7 +10,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/fluent/fluent-logger-golang/fluent"
 	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 
@@ -45,8 +44,7 @@ var (
 	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
 	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
 	// fluentD
-	fluentDHostFlag = flag.String("fluentd-host", "35.175.121.222", "fluentd host")
-	fluentDPortFlag = flag.Int("fluentd-port", 24224, "fluentd port")
+	fluentDHostFlag = flag.String("fluentd-host", "", "fluentd host")
 )
 
 func main() {
@@ -156,12 +154,4 @@ func getEnv(key string, defaultValue string) string {
 		return value
 	}
 	return defaultValue
-}
-
-func fluentDConfig(host string, port int, tag string) fluent.Config {
-	return fluent.Config{
-		FluentHost: host,
-		FluentPort: port,
-		TagPrefix:  tag,
-	}
 }
