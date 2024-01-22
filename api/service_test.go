@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/attestantio/go-builder-client/spec"
-	"github.com/bloXroute-Labs/mev-relay-proxy/stats"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/zap"

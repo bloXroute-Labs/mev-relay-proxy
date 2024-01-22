@@ -20,7 +20,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bloXroute-Labs/gateway/v2/utils/syncmap"
-	"github.com/bloXroute-Labs/mev-relay-proxy/stats"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
 	"github.com/google/uuid"
 	"go.uber.org/zap"

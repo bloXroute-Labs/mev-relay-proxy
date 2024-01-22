@@ -6,9 +6,12 @@ require (
 	github.com/attestantio/go-builder-client v0.4.2
 	github.com/bloXroute-Labs/gateway/v2 v2.127.75-0.20231129102830-ab252898d3c3
 	github.com/bloXroute-Labs/relay-grpc v0.0.13-0.20240121160327-229901f4b11a
+	github.com/ethereum/go-ethereum v1.13.1
+	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/go-chi/chi/v5 v5.0.10
 	github.com/google/uuid v1.3.1
 	github.com/uptrace/uptrace-go v1.21.0
+	github.com/urfave/cli/v2 v2.25.7
 	go.opentelemetry.io/otel v1.21.0
 	go.opentelemetry.io/otel/trace v1.21.0
 	go.uber.org/zap v1.26.0
@@ -33,7 +36,6 @@ require (
 	github.com/evalphobia/logrus_fluent v0.5.4 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/ferranbt/fastssz v0.1.3 // indirect
-	github.com/fluent/fluent-logger-golang v1.9.0 // indirect
 	github.com/go-logr/logr v1.3.0 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
@@ -66,6 +68,7 @@ require (
 	github.com/supranational/blst v0.3.11 // indirect
 	github.com/thomaso-mirodin/intmath v0.0.0-20160323211736-5dc6d854e46e // indirect
 	github.com/tinylib/msgp v1.1.9 // indirect
+	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.46.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v0.44.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.21.0 // indirect

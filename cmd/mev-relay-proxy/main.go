@@ -14,7 +14,6 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/bloXroute-Labs/mev-relay-proxy/api"
-	"github.com/bloXroute-Labs/mev-relay-proxy/stats"
 	"github.com/google/uuid"
 
 	"time"
