@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/bloXroute-Labs/mev-relay-proxy/api"
+	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	"github.com/google/uuid"
 
 	"time"
@@ -106,10 +107,7 @@ func main() {
 	tracer := otel.Tracer("main")
 
 	// init fluentD if enabled
-	fluentLogger, err := fluent.New(fluentDConfig(*fluentDHostFlag, *fluentDPortFlag, "mev-relay-proxy"))
-	if err != nil {
-		l.Error("Error connecting to fluentD %v", zap.Error(err))
-	}
+	fluentLogger := fluentstats.NewStats(true, *fluentDHostFlag)
 
 	// init service and server
 	svc := api.NewService(l, tracer, _BuildVersion, *nodeID, *authKey, _SecretToken, fluentLogger, clients...)

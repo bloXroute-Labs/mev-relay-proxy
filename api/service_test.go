@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/attestantio/go-builder-client/spec"
+	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
-	"github.com/fluent/fluent-logger-golang/fluent"
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -129,7 +129,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	l := zap.NewNop()
-	fluent := &fluent.Fluent{}
+	fluent := fluentstats.NoStats{}
 	//l, _ := zap.NewDevelopment()
 	streams := []stream{
 		{Slot: uint64(66), BlockHash: "blockHash66", ParentHash: "0x66", ProposerPubKey: "0x66", Value: new(big.Int).SetInt64(66666).Bytes()},

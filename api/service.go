@@ -20,8 +20,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bloXroute-Labs/gateway/v2/utils/syncmap"
+	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
-	"github.com/fluent/fluent-logger-golang/fluent"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -49,7 +49,7 @@ type Service struct {
 	secretToken  string
 	isStreamOpen bool
 	tracer       trace.Tracer
-	fluentD      *fluent.Fluent
+	fluentD      fluentstats.Stats
 }
 
 type Client struct {
@@ -65,7 +65,7 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, secretToken string, fluentD *fluent.Fluent, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, secretToken string, fluentD fluentstats.Stats, clients ...*Client) *Service {
 	return &Service{
 		logger:      logger,
 		version:     version,
@@ -94,16 +94,19 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.Time("receivedAt", receivedAt),
 	)
 
-	s.fluentD.PostWithTime(
-		"mev.relay.proxy",
-		time.Now(),
-		map[string]string{
+	//type Record struct {
+	// 	Type string      `json:"type"`
+	// 	Data interface{} `json:"data"`
+	// }
+
+	s.fluentD.LogToFluentD(fluentstats.Record{
+		Type: "BLXR-recvBndl-ss-submittedBundle",
+		Data: map[string]interface{}{
 			"reqID":    id,
-			"method":   "registerValidator",
 			"clientIP": clientIP,
-			"received": receivedAt.String(),
+			"received": receivedAt,
 		},
-	)
+	}, time.Now(), "BLXR-recvBndl-ss-submittedBundle")
 
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 
