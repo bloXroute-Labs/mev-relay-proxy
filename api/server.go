@@ -8,11 +8,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fluent/fluent-logger-golang/fluent"
+	"github.com/go-chi/chi"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/go-chi/chi/v5"
-
 	"go.uber.org/zap"
 )
 
@@ -38,15 +37,17 @@ type Server struct {
 	listenAddress  string
 	getHeaderDelay int
 	tracer         trace.Tracer
+	fluentD        *fluent.Fluent
 }
 
-func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, tracer trace.Tracer) *Server {
+func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, tracer trace.Tracer, fluentD *fluent.Fluent) *Server {
 	return &Server{
 		logger:         logger,
 		svc:            svc,
 		listenAddress:  listenAddress,
 		getHeaderDelay: getHeaderDelay,
 		tracer:         tracer,
+		fluentD:        fluentD,
 	}
 }
 

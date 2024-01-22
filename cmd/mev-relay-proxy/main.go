@@ -10,6 +10,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/fluent/fluent-logger-golang/fluent"
 	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 
@@ -42,6 +43,9 @@ var (
 	authKey            = flag.String("auth-key", "", "account authentication key")
 	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
 	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
+	// fluentD
+	fluentDHostFlag = flag.String("fluentd-host", "35.175.121.222", "fluentd host")
+	fluentDPortFlag = flag.Int("fluentd-port", 24224, "fluentd port")
 )
 
 func main() {
@@ -101,9 +105,15 @@ func main() {
 
 	tracer := otel.Tracer("main")
 
+	// init fluentD if enabled
+	fluentLogger, err := fluent.New(fluentDConfig(*fluentDHostFlag, *fluentDPortFlag, "mev-relay-proxy"))
+	if err != nil {
+		l.Error("Error connecting to fluentD %v", zap.Error(err))
+	}
+
 	// init service and server
-	svc := api.NewService(l, tracer, _BuildVersion, *nodeID, *authKey, _SecretToken, clients...)
-	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer)
+	svc := api.NewService(l, tracer, _BuildVersion, *nodeID, *authKey, _SecretToken, fluentLogger, clients...)
+	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer, fluentLogger)
 
 	exit := make(chan struct{})
 	go func() {
@@ -148,4 +158,12 @@ func getEnv(key string, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func fluentDConfig(host string, port int, tag string) fluent.Config {
+	return fluent.Config{
+		FluentHost: host,
+		FluentPort: port,
+		TagPrefix:  tag,
+	}
 }

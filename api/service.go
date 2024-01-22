@@ -21,6 +21,7 @@ import (
 
 	"github.com/bloXroute-Labs/gateway/v2/utils/syncmap"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
+	"github.com/fluent/fluent-logger-golang/fluent"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -48,6 +49,7 @@ type Service struct {
 	secretToken  string
 	isStreamOpen bool
 	tracer       trace.Tracer
+	fluentD      *fluent.Fluent
 }
 
 type Client struct {
@@ -63,7 +65,7 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, secretToken string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, secretToken string, fluentD *fluent.Fluent, clients ...*Client) *Service {
 	return &Service{
 		logger:      logger,
 		version:     version,
@@ -73,6 +75,7 @@ func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID 
 		authKey:     authKey,
 		secretToken: secretToken,
 		tracer:      tracer,
+		fluentD:     fluentD,
 	}
 }
 
@@ -90,6 +93,18 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
+
+	s.fluentD.PostWithTime(
+		"mev.relay.proxy",
+		time.Now(),
+		map[string]string{
+			"reqID":    id,
+			"method":   "registerValidator",
+			"clientIP": clientIP,
+			"received": receivedAt.String(),
+		},
+	)
+
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 
 	parentSpan := trace.SpanFromContext(ctx)

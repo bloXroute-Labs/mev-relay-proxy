@@ -18,6 +18,7 @@ import (
 
 	"github.com/attestantio/go-builder-client/spec"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
+	"github.com/fluent/fluent-logger-golang/fluent"
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -128,6 +129,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	l := zap.NewNop()
+	fluent := &fluent.Fluent{}
 	//l, _ := zap.NewDevelopment()
 	streams := []stream{
 		{Slot: uint64(66), BlockHash: "blockHash66", ParentHash: "0x66", ProposerPubKey: "0x66", Value: new(big.Int).SetInt64(66666).Bytes()},
@@ -161,7 +163,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	defer conn.Close()
 	relayClient := relaygrpc.NewRelayClient(conn)
 	c := &Client{lis.Addr().String(), "", conn, relayClient}
-	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "4nDpR2sVxYz1BtU6wFqGhJkLp3Tm5ZoX", c)
+	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "4nDpR2sVxYz1BtU6wFqGhJkLp3Tm5ZoX", fluent, c)
 
 	go func() {
 		if _, err := service.StreamHeader(ctx, c); err != nil {
