@@ -326,7 +326,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 }
 
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
-	startTime := time.Now()
+	startTime := time.Now().UTC()
 	k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", slot, parentHash, pubKey)
 	id := uuid.NewString()
 	parentSpan := trace.SpanFromContext(ctx)
