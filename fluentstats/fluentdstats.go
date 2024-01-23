@@ -68,11 +68,6 @@ func (s FluentdStats) LogToFluentD(record Record, ts time.Time, logName string) 
 	}
 }
 
-const (
-	BLXRRecvBndlSucess         = "BLXR-recvBndl-ss-submittedBundle"
-	BLXRWorkerBlockBundlesInfo = "BLXR-worker-block-bundles-info"
-)
-
 func newStats(fluentdHost string) Stats {
 	fluentLogger, err := fluent.New(fluent.Config{
 		FluentHost:    fluentdHost,
