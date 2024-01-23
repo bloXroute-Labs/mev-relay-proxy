@@ -1,6 +1,8 @@
 package fluentstats
 
 import (
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/ethereum/go-ethereum/log"
@@ -50,6 +52,7 @@ func NewStats(fluentDEnabled bool, fluentDHost string) Stats {
 	if !fluentDEnabled {
 		return NoStats{}
 	}
+
 	return newStats(fluentDHost)
 }
 
@@ -69,15 +72,26 @@ func (s FluentdStats) LogToFluentD(record Record, ts time.Time, logName string) 
 }
 
 func newStats(fluentdHost string) Stats {
+	host, port, err := net.SplitHostPort(fluentdHost)
+	if err != nil {
+		log.Error("Error parsing fluentd host", "err", err)
+		return NoStats{}
+	}
+	portInt, err := strconv.Atoi(port)
+	if err != nil {
+		log.Error("Error parsing port to integer", "err", err)
+		return NoStats{}
+	}
 	fluentLogger, err := fluent.New(fluent.Config{
-		FluentHost:    fluentdHost,
-		FluentPort:    24224,
+		FluentHost:    host,
+		FluentPort:    portInt,
 		MarshalAsJSON: true,
 		Async:         true,
 	})
 
+	log.Info("Connecting to fluentd", "host", host, "port", portInt)
 	if err != nil {
-		log.Error("Error connecting to fluentD %v", err)
+		log.Error("Error connecting to fluentd", "err", err)
 		return NoStats{}
 	}
 	return FluentdStats{
