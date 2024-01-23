@@ -50,7 +50,6 @@ func NewStats(fluentDEnabled bool, fluentDHost string) Stats {
 	if !fluentDEnabled {
 		return NoStats{}
 	}
-
 	return newStats(fluentDHost)
 }
 
@@ -68,11 +67,6 @@ func (s FluentdStats) LogToFluentD(record Record, ts time.Time, logName string) 
 		log.Error("Error sending message to fluentD", "err", err)
 	}
 }
-
-const (
-	BLXRRecvBndlSucess         = "BLXR-recvBndl-ss-submittedBundle"
-	BLXRWorkerBlockBundlesInfo = "BLXR-worker-block-bundles-info"
-)
 
 func newStats(fluentdHost string) Stats {
 	fluentLogger, err := fluent.New(fluent.Config{
