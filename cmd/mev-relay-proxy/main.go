@@ -42,6 +42,8 @@ var (
 	authKey            = flag.String("auth-key", "", "account authentication key")
 	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
 	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
+
+	beaconGenesisTime = flag.Int64("beacon-genesis-time", 1606824023, "beacon genesis time in unix timestamp")
 )
 
 func main() {
@@ -103,7 +105,7 @@ func main() {
 
 	// init service and server
 	svc := api.NewService(l, tracer, _BuildVersion, *nodeID, *authKey, _SecretToken, clients...)
-	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer)
+	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer, *beaconGenesisTime)
 
 	exit := make(chan struct{})
 	go func() {

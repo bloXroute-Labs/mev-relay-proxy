@@ -39,15 +39,19 @@ type Server struct {
 	listenAddress  string
 	getHeaderDelay int
 	tracer         trace.Tracer
+
+	beaconGenesisTime int64
 }
 
-func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, tracer trace.Tracer) *Server {
+func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, tracer trace.Tracer, beaconGenesisTime int64) *Server {
 	return &Server{
 		logger:         logger,
 		svc:            svc,
 		listenAddress:  listenAddress,
 		getHeaderDelay: getHeaderDelay,
 		tracer:         tracer,
+
+		beaconGenesisTime: beaconGenesisTime,
 	}
 }
 
@@ -147,6 +151,11 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	pubKey := chi.URLParam(r, "pubkey")
 	clientIP := GetIPXForwardedFor(r)
 
+	slotInt := s.AToI(slot)
+	slotStartTime := s.GetSlotStartTime(slotInt)
+
+	sleep, maxSleep := s.GetSleepParams(r)
+
 	parentSpan := trace.SpanFromContext(r.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
 
@@ -156,11 +165,23 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
 		attribute.Int("resp_code", 200),
+		attribute.Int64("slotStartTimeUnix", slotStartTime.Unix()),
+		attribute.String("slotStartTime", slotStartTime.UTC().String()),
+		attribute.Int64("slot", slotInt),
+
+		attribute.Int64("sleep", sleep),
+		attribute.Int64("maxSleep", maxSleep),
 	)
 
 	_, span := s.tracer.Start(parentSpanCtx, "HandleGetHeader")
 
-	<-time.After(time.Millisecond * time.Duration(s.getHeaderDelay))
+	maxSleepTime := slotStartTime.Add(time.Duration(maxSleep) * time.Millisecond)
+	if time.Now().UTC().Add(time.Duration(sleep) * time.Millisecond).After(maxSleepTime) {
+		time.Sleep(maxSleepTime.Sub(time.Now().UTC()))
+	} else {
+		time.Sleep(time.Duration(sleep) * time.Millisecond)
+	}
+
 	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey)
 	if err != nil {
 		respondError(getHeader, w, err, s.logger, metaData, s.tracer)
@@ -248,6 +269,8 @@ func respondError(method string, w http.ResponseWriter, err error, log *zap.Logg
 		attribute.Int("resp_code", 200),
 	)
 
+	defer childSpan.End()
+
 	resp := err.(*ErrorResp)
 	var meta string
 	if metaData != nil {
@@ -259,7 +282,8 @@ func respondError(method string, w http.ResponseWriter, err error, log *zap.Logg
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			log.With(zap.String("req_id", resp.BlxrMessage.reqID), zap.String("blxr_message", resp.BlxrMessage.msg), zap.String("client_ip", resp.BlxrMessage.clientIP), zap.String("resp_message", resp.Message), zap.Int("resp_code", resp.Code)).Error("couldn't write error response", zap.Error(err), zap.String("metaData", meta))
 			http.Error(w, "", http.StatusInternalServerError)
+			return
 		}
+		return
 	}
-	childSpan.End()
 }
