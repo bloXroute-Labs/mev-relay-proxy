@@ -136,7 +136,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 
 	defer span.End()
 
-	respondOK(registration, w, out, s.logger, metaData, s.tracer, s.fluentD)
+	respondOK(registration, w, out, s.logger, metaData, s.tracer)
 }
 
 func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +168,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 
 	defer span.End()
 
-	respondOK(getHeader, w, out, s.logger, metaData, s.tracer, s.fluentD)
+	respondOK(getHeader, w, out, s.logger, metaData, s.tracer)
 }
 
 func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
@@ -201,10 +201,10 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 
 	defer span.End()
 
-	respondOK(getPayload, w, out, s.logger, metaData, s.tracer, s.fluentD)
+	respondOK(getPayload, w, out, s.logger, metaData, s.tracer)
 }
 
-func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logger, metaData any, tracer trace.Tracer, fluentD fluentstats.Stats) {
+func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logger, metaData any, tracer trace.Tracer) {
 
 	ctx, parentSpan := tracer.Start(context.Background(), "respondOK-main")
 	defer parentSpan.End()
@@ -232,14 +232,6 @@ func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logg
 	}
 	childSpan.End()
 	log.Info(fmt.Sprintf("%s succeeded", method), zap.String("metaData", meta))
-	fluentD.LogToFluentD(fluentstats.Record{
-		Type: "relay-proxy-server",
-		Data: map[string]interface{}{
-			"method": method,
-			"status": "success",
-			"meta":   meta,
-		},
-	}, time.Now(), "relay-proxy-server")
 }
 
 func respondError(method string, w http.ResponseWriter, err error, log *zap.Logger, metaData any, tracer trace.Tracer) {
