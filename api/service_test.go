@@ -115,6 +115,7 @@ func TestService_getPayload(t *testing.T) {
 				logger:  zap.NewNop(),
 				clients: []*Client{{RelayClient: &mockRelayClient{GetPayloadFunc: tt.f}}},
 				tracer:  noop.NewTracerProvider().Tracer("test"),
+				fluentD: fluentstats.NewStats(true, ""),
 			}
 			got, _, err := s.GetPayload(context.Background(), time.Now(), nil, "")
 			if err == nil {
@@ -130,7 +131,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	l := zap.NewNop()
-	fluent := fluentstats.NoStats{}
+	fluent := fluentstats.NewStats(true, "")
 	//l, _ := zap.NewDevelopment()
 	streams := []stream{
 		{Slot: uint64(66), BlockHash: "blockHash66", ParentHash: "0x66", ProposerPubKey: "0x66", Value: new(big.Int).SetInt64(66666).Bytes()},
