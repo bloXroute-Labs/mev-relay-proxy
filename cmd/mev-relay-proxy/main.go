@@ -44,7 +44,8 @@ var (
 	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
 	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
 	// fluentD
-	fluentDHostFlag = flag.String("fluentd-host", "", "fluentd host")
+	fluentDHostFlag   = flag.String("fluentd-host", "", "fluentd host")
+	beaconGenesisTime = flag.Int64("beacon-genesis-time", 1606824023, "beacon genesis time in unix timestamp")
 )
 
 func main() {
@@ -109,7 +110,7 @@ func main() {
 
 	// init service and server
 	svc := api.NewService(l, tracer, _BuildVersion, *nodeID, *authKey, _SecretToken, fluentLogger, clients...)
-	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer, fluentLogger)
+	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer, fluentLogger, *beaconGenesisTime)
 
 	exit := make(chan struct{})
 	go func() {
