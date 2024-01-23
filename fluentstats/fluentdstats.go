@@ -50,7 +50,6 @@ func NewStats(fluentDEnabled bool, fluentDHost string) Stats {
 	if !fluentDEnabled {
 		return NoStats{}
 	}
-
 	return newStats(fluentDHost)
 }
 

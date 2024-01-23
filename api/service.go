@@ -95,13 +95,13 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	)
 
 	s.fluentD.LogToFluentD(fluentstats.Record{
-		Type: "BLXR-recvBndl-ss-submittedBundle",
+		Type: "relay-proxy-registerValidator",
 		Data: map[string]interface{}{
 			"reqID":    id,
 			"clientIP": clientIP,
 			"received": receivedAt,
 		},
-	}, time.Now(), "BLXR-recvBndl-ss-submittedBundle")
+	}, time.Now(), "relay-proxy-registerValidator")
 
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 
