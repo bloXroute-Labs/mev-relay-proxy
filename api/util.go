@@ -4,7 +4,16 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
+
+	"go.uber.org/zap"
+)
+
+var (
+	defaultSleepTime = int64(500)
+	defaultSleepMax  = int64(1200)
 )
 
 // decodeJSON reads JSON from io.Reader and decodes it into a struct
@@ -48,4 +57,37 @@ func getAuth(r *http.Request) string {
 
 	// fallback to query param
 	return r.URL.Query().Get("auth")
+}
+
+// GetSleepParams returns the sleep time and max sleep time from the request
+func (s *Server) GetSleepParams(r *http.Request) (int64, int64) {
+
+	sleepTime, sleepMax := defaultSleepTime, defaultSleepMax
+
+	sleep := r.URL.Query().Get("sleep")
+	if sleep != "" {
+		sleepTime = s.AToI(sleep)
+	}
+
+	maxSleep := r.URL.Query().Get("max_sleep")
+	if maxSleep != "" {
+		sleepMax = s.AToI(maxSleep)
+	}
+
+	return sleepTime, sleepMax
+}
+
+// AToI converts a string to an int64
+func (s *Server) AToI(value string) int64 {
+	i, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		s.logger.Error("failed to parse int", zap.String("value", value), zap.Error(err))
+		return 0
+	}
+	return int64(i)
+}
+
+// GetSlotStartTime returns the time of the start of the slot
+func (s *Server) GetSlotStartTime(slot int64) time.Time {
+	return time.Unix(s.beaconGenesisTime+(int64(slot)*12), 0).UTC()
 }
