@@ -375,41 +375,45 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			}
 		}
 		out := headers[index]
-		s.fluentD.LogToFluentD(fluentstats.Record{
-			Type: "relay_proxy_provided_header",
-			Data: map[string]interface{}{
-				"received":   receivedAt,
-				"duration":   time.Since(startTime),
-				"parentHash": parentHash,
-				"pubKey":     pubKey,
-				"blockHash":  out.BlockHash,
-				"reqID":      id,
-				"clientIP":   clientIP,
-				"blockValue": val.String(),
-				"succeeded":  true,
-				"nodeID":     s.nodeID,
-			},
-		}, time.Now().UTC(), "relay-proxy-getHeader")
+		go func() {
+			s.fluentD.LogToFluentD(fluentstats.Record{
+				Type: "relay_proxy_provided_header",
+				Data: map[string]interface{}{
+					"received":   receivedAt,
+					"duration":   time.Since(startTime),
+					"parentHash": parentHash,
+					"pubKey":     pubKey,
+					"blockHash":  out.BlockHash,
+					"reqID":      id,
+					"clientIP":   clientIP,
+					"blockValue": val.String(),
+					"succeeded":  true,
+					"nodeID":     s.nodeID,
+				},
+			}, time.Now().UTC(), "relay-proxy-getHeader")
+		}()
 
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
 	spanStoringHeader.End()
 	msg := fmt.Sprintf("header value is not present for the requested key %v", k)
-	s.fluentD.LogToFluentD(fluentstats.Record{
-		Type: "relay_proxy_provided_header",
-		Data: map[string]interface{}{
-			"RequestReceivedAt": receivedAt,
-			"duration":          time.Since(startTime),
-			"parentHash":        parentHash,
-			"pubKey":            pubKey,
-			"blockHash":         "",
-			"reqID":             id,
-			"clientIP":          clientIP,
-			"blockValue":        "",
-			"succeeded":         false,
-			"nodeID":            s.nodeID,
-		},
-	}, time.Now().UTC(), "relay-proxy-getHeader")
+	go func() {
+		s.fluentD.LogToFluentD(fluentstats.Record{
+			Type: "relay_proxy_provided_header",
+			Data: map[string]interface{}{
+				"RequestReceivedAt": receivedAt,
+				"duration":          time.Since(startTime),
+				"parentHash":        parentHash,
+				"pubKey":            pubKey,
+				"blockHash":         "",
+				"reqID":             id,
+				"clientIP":          clientIP,
+				"blockValue":        "",
+				"succeeded":         false,
+				"nodeID":            s.nodeID,
+			},
+		}, time.Now().UTC(), "relay-proxy-getHeader")
+	}()
 	return nil, k, toErrorResp(http.StatusNoContent, msg, id, msg, clientIP)
 }
 
@@ -476,41 +480,44 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	for i := 0; i < len(s.clients); i++ {
 		select {
 		case <-ctx.Done():
-			s.fluentD.LogToFluentD(fluentstats.Record{
-				Type: "relay_proxy_provided_payload",
-				Data: map[string]interface{}{
-					"RequestReceivedAt": receivedAt,
-					"duration":          time.Since(startTime),
-					"slot":              "",
-					"parentHash":        "",
-					"pubKey":            "",
-					"blockHash":         "",
-					"reqID":             id,
-					"clientIP":          clientIP,
-					"succeeded":         false,
-					"nodeID":            s.nodeID,
-				},
-			}, time.Now().UTC(), "relay-proxy-getPayload")
+			go func() {
+				s.fluentD.LogToFluentD(fluentstats.Record{
+					Type: "relay_proxy_provided_payload",
+					Data: map[string]interface{}{
+						"RequestReceivedAt": receivedAt,
+						"duration":          time.Since(startTime),
+						"slot":              "",
+						"parentHash":        "",
+						"pubKey":            "",
+						"blockHash":         "",
+						"reqID":             id,
+						"clientIP":          clientIP,
+						"succeeded":         false,
+						"nodeID":            s.nodeID,
+					},
+				}, time.Now().UTC(), "relay-proxy-getPayload")
+			}()
 			return nil, meta, toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, ctx.Err().Error(), clientIP)
 		case _err = <-errChan:
 			// if multiple client return errors, first error gets replaced by the subsequent errors
 		case out := <-respChan:
-			s.fluentD.LogToFluentD(fluentstats.Record{
-				Type: "relay_proxy_provided_payload",
-				Data: map[string]interface{}{
-					"RequestReceivedAt": receivedAt,
-					"duration":          time.Since(startTime),
-					"slot":              out.GetSlot(),
-					"parentHash":        out.GetParentHash(),
-					"pubKey":            out.GetPubkey(),
-					"blockHash":         out.GetBlockHash(),
-					"reqID":             id,
-					"clientIP":          clientIP,
-					"succeeded":         true,
-					"nodeID":            s.nodeID,
-				},
-			}, time.Now().UTC(), "relay-proxy-getPayload")
-
+			go func() {
+				s.fluentD.LogToFluentD(fluentstats.Record{
+					Type: "relay_proxy_provided_payload",
+					Data: map[string]interface{}{
+						"RequestReceivedAt": receivedAt,
+						"duration":          time.Since(startTime),
+						"slot":              out.GetSlot(),
+						"parentHash":        out.GetParentHash(),
+						"pubKey":            out.GetPubkey(),
+						"blockHash":         out.GetBlockHash(),
+						"reqID":             id,
+						"clientIP":          clientIP,
+						"succeeded":         true,
+						"nodeID":            s.nodeID,
+					},
+				}, time.Now().UTC(), "relay-proxy-getPayload")
+			}()
 			return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
 		}
 	}
