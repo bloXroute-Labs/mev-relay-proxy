@@ -177,10 +177,26 @@ func (s *Service) handleStream(ctx context.Context, client *Client) {
 		select {
 		case <-ctx.Done():
 			s.logger.Warn("stream header context cancelled")
+			s.fluentD.LogToFluentD(fluentstats.Record{
+				Type: "relay-proxy-streamHeader",
+				Data: map[string]interface{}{
+					"clientIP": client.URL,
+					"received": time.Now(),
+					"msg":      "stream header context cancelled",
+				},
+			}, time.Now(), "relay-proxy-streamHeader-cancelled")
 			return
 		default:
 			if _, err := s.StreamHeader(ctx, client); err != nil {
 				s.logger.Warn("failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
+				s.fluentD.LogToFluentD(fluentstats.Record{
+					Type: "relay-proxy-streamHeader",
+					Data: map[string]interface{}{
+						"clientIP": client.URL,
+						"received": time.Now(),
+						"msg":      "failed to stream header. Sleeping 1 second and then reconnecting",
+					},
+				}, time.Now(), "relay-proxy-streamHeader-failed")
 			}
 			time.Sleep(time.Second)
 		}
@@ -227,6 +243,14 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	})
 
 	s.logger.Info("streaming headers", zap.String("nodeID", client.nodeID))
+	s.fluentD.LogToFluentD(fluentstats.Record{
+		Type: "relay-proxy-streamHeader",
+		Data: map[string]interface{}{
+			"clientIP": client.URL,
+			"received": time.Now(),
+			"msg":      "streaming headers",
+		},
+	}, time.Now(), "relay-proxy-streamHeader")
 	parentSpan.SetAttributes(
 		attribute.String("method", "streamHeader"),
 		attribute.String("nodeID", client.nodeID),
@@ -345,6 +369,17 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		zap.String("key", k),
 		zap.String("reqID", id),
 	)
+
+	s.fluentD.LogToFluentD(fluentstats.Record{
+		Type: "relay-proxy-getHeader",
+		Data: map[string]interface{}{
+			"clientIP": clientIP,
+			"received": receivedAt,
+			"key":      k,
+			"reqID":    id,
+		},
+	}, time.Now(), "relay-proxy-getHeader")
+
 	parentSpan.SetAttributes(
 		attribute.String("method", "getHeader"),
 		attribute.String("clientIP", clientIP),
@@ -363,6 +398,15 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			// cleanup old slots/headers
 			time.AfterFunc(time.Second*30, func() {
 				s.logger.Info("cleanup old slot", zap.String("key", k))
+				s.fluentD.LogToFluentD(fluentstats.Record{
+					Type: "relay-proxy-getHeader",
+					Data: map[string]interface{}{
+						"clientIP": clientIP,
+						"received": receivedAt,
+						"key":      k,
+						"reqID":    id,
+					},
+				}, time.Now(), "relay-proxy-getHeader")
 				s.headers.Delete(k)
 			})
 		}()
@@ -399,6 +443,15 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
+	s.fluentD.LogToFluentD(fluentstats.Record{
+		Type: "relay-proxy-getPayload",
+		Data: map[string]interface{}{
+			"clientIP":        clientIP,
+			"received":        receivedAt,
+			"reqID":           id,
+			"numberOfClients": len(s.clients),
+		},
+	}, time.Now(), "relay-proxy-getPayload")
 	parentSpan.SetAttributes(
 		attribute.String("method", "getPayload"),
 		attribute.String("clientIP", clientIP),
