@@ -18,6 +18,7 @@ import (
 
 // Router paths
 var (
+	pathIndex             = "/"
 	pathStatus            = "/eth/v1/builder/status"
 	pathRegisterValidator = "/eth/v1/builder/validators"
 	pathGetHeader         = "/eth/v1/builder/header/{slot:[0-9]+}/{parent_hash:0x[a-fA-F0-9]+}/{pubkey:0x[a-fA-F0-9]+}"
@@ -68,6 +69,7 @@ func (s *Server) Start() error {
 
 func (s *Server) InitHandler() *chi.Mux {
 	handler := chi.NewRouter()
+	handler.Get(pathIndex, s.HandleStatus)
 	handler.Get(pathStatus, s.HandleStatus)
 	handler.Post(pathRegisterValidator, s.HandleRegistration)
 	handler.Get(pathGetHeader, s.HandleGetHeader)
