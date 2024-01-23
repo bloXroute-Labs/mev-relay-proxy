@@ -28,7 +28,9 @@ import (
 )
 
 const (
-	requestTimeout = 3 * time.Second
+	connReconnectTimeout = 5 * time.Second
+	requestTimeout       = 3 * time.Second
+	stateCheckerInterval = 5 * time.Second
 )
 
 type IService interface {
@@ -240,11 +242,6 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			close(done)
 		})
 	}
-
-	// Periodically clean up headers
-	expiredKeyCh := make(chan string, 100)
-	go s.cleanUpExpiredHeaders(expiredKeyCh)
-
 	go func() {
 		select {
 		case <-stream.Context().Done():
@@ -322,22 +319,10 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		h := make([]*Header, 0)
 		h = append(h, v)
 		s.headers.Store(k, h)
-		// Send the key to chan for expiration after 1 minute to clean-up
-		go func(key string) {
-			<-time.After(time.Minute)
-			expiredKeyCh <- key
-		}(k)
 	}
 	<-done
 	s.logger.Warn("closing connection", zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 	return nil, nil
-}
-
-func (s *Service) cleanUpExpiredHeaders(expiredKeyCh <-chan string) {
-	for k := range expiredKeyCh {
-		s.logger.Info("cleanup old slot", zap.String("key", k))
-		s.headers.Delete(k)
-	}
 }
 
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
@@ -365,6 +350,16 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
 	_, span := s.tracer.Start(parentSpanCtx, "getHeader")
 	defer span.End()
+
+	defer func() {
+		go func() {
+			// cleanup old slots/headers
+			time.AfterFunc(time.Second*30, func() {
+				s.logger.Info("cleanup old slot", zap.String("key", k))
+				s.headers.Delete(k)
+			})
+		}()
+	}()
 
 	_, spanStoringHeader := s.tracer.Start(parentSpanCtx, "storingHeader")
 	val := new(big.Int)
@@ -394,7 +389,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 				"succeeded":  true,
 				"nodeID":     s.nodeID,
 			},
-		}, time.Now(), "relay-proxy-getHeader")
+		}, time.Now().UTC(), "relay-proxy-getHeader")
 
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
@@ -414,12 +409,12 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			"succeeded":         false,
 			"nodeID":            s.nodeID,
 		},
-	}, time.Now(), "relay-proxy-getHeader")
+	}, time.Now().UTC(), "relay-proxy-getHeader")
 	return nil, k, toErrorResp(http.StatusNoContent, msg, id, msg, clientIP)
 }
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
-	startTime := time.Now()
+	startTime := time.Now().UTC()
 	id := uuid.NewString()
 	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
@@ -495,7 +490,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 					"succeeded":         false,
 					"nodeID":            s.nodeID,
 				},
-			}, time.Now(), "relay-proxy-getPayload")
+			}, time.Now().UTC(), "relay-proxy-getPayload")
 			return nil, meta, toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, ctx.Err().Error(), clientIP)
 		case _err = <-errChan:
 			// if multiple client return errors, first error gets replaced by the subsequent errors
@@ -514,7 +509,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 					"succeeded":         true,
 					"nodeID":            s.nodeID,
 				},
-			}, time.Now(), "relay-proxy-getPayload")
+			}, time.Now().UTC(), "relay-proxy-getPayload")
 
 			return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
 		}
