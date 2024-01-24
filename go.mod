@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/attestantio/go-builder-client v0.4.2
 	github.com/bloXroute-Labs/gateway/v2 v2.127.75-0.20231129102830-ab252898d3c3
-	github.com/bloXroute-Labs/relay-grpc v0.0.13-0.20240121160327-229901f4b11a
+	github.com/bloXroute-Labs/relay-grpc v0.0.14-0.20240124004426-01813a6823bf
 	github.com/go-chi/chi/v5 v5.0.10
 	github.com/google/uuid v1.3.1
 	github.com/uptrace/uptrace-go v1.21.0
@@ -18,7 +18,7 @@ require (
 )
 
 require (
-	github.com/attestantio/go-eth2-client v0.19.7 // indirect
+	github.com/attestantio/go-eth2-client v0.19.9 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.10.0 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2 // indirect
@@ -75,10 +75,10 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.21.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.0.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.17.0 // indirect
+	golang.org/x/crypto v0.18.0 // indirect
 	golang.org/x/net v0.19.0 // indirect
 	golang.org/x/sync v0.4.0 // indirect
-	golang.org/x/sys v0.15.0 // indirect
+	golang.org/x/sys v0.16.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/genproto v0.0.0-20231211222908-989df2bf70f3 // indirect
