@@ -9,6 +9,9 @@ all: build
 v:
 	@echo "${VERSION}"
 
+fmt:
+	gofmt -s -w .
+
 .PHONY: build
 build:
 	go build -ldflags "-X main._BuildVersion=${VERSION}" -v -o ${REPO} ${MAIN_FILE}
