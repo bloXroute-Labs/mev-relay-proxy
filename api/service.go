@@ -42,10 +42,11 @@ type Service struct {
 	clients []*Client
 	nodeID  string // UUID
 	//slotCleanUpCh chan uint64
-	authKey      string
-	secretToken  string
-	isStreamOpen bool
-	tracer       trace.Tracer
+	authKey          string
+	secretToken      string
+	isStreamOpen     bool
+	tracer           trace.Tracer
+	expiredSlotKeyCh chan string
 }
 
 type Client struct {
@@ -63,14 +64,15 @@ type Header struct {
 
 func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, secretToken string, clients ...*Client) *Service {
 	return &Service{
-		logger:      logger,
-		version:     version,
-		clients:     clients,
-		headers:     syncmap.NewStringMapOf[[]*Header](),
-		nodeID:      nodeID,
-		authKey:     authKey,
-		secretToken: secretToken,
-		tracer:      tracer,
+		logger:           logger,
+		version:          version,
+		clients:          clients,
+		headers:          syncmap.NewStringMapOf[[]*Header](),
+		nodeID:           nodeID,
+		authKey:          authKey,
+		secretToken:      secretToken,
+		tracer:           tracer,
+		expiredSlotKeyCh: make(chan string, 100),
 	}
 }
 
@@ -146,7 +148,12 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	return nil, nil, _err
 }
 
-func (s *Service) WrapStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
+func (s *Service) StartStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
+
+	// Periodically clean up headers
+	go s.cleanUpExpiredHeaders(s.expiredSlotKeyCh)
+	defer close(s.expiredSlotKeyCh)
+
 	for _, client := range s.clients {
 		wg.Add(1)
 		go func(_ctx context.Context, c *Client) {
@@ -158,21 +165,6 @@ func (s *Service) WrapStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (s *Service) handleStream(ctx context.Context, client *Client) {
-	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Warn("stream header context cancelled")
-			return
-		default:
-			if _, err := s.StreamHeader(ctx, client); err != nil {
-				s.logger.Warn("failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
-			}
-			time.Sleep(time.Second)
-		}
-	}
-}
-
-func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
 	parentSpan := trace.SpanFromContext(ctx)
 	parentSpan.SetAttributes(
 		attribute.String("method", "streamHeader"),
@@ -185,13 +177,13 @@ func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.logger.Warn("Stream header context cancelled")
+			s.logger.Warn("stream header context cancelled")
 			return
 		default:
 			if _, err := s.StreamHeader(ctx, client); err != nil {
-				s.logger.Warn("Failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
+				s.logger.Warn("failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
 			} else {
-				s.logger.Warn("Stream header stopped.  Sleeping 1 second and then reconnecting", zap.String("url", client.URL))
+				s.logger.Warn("stream header stopped.  Sleeping 1 second and then reconnecting", zap.String("url", client.URL))
 			}
 			time.Sleep(1 * time.Second)
 		}
@@ -236,10 +228,6 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			close(done)
 		})
 	}
-
-	// Periodically clean up headers
-	expiredKeyCh := make(chan string, 100)
-	go s.cleanUpExpiredHeaders(expiredKeyCh)
 
 	go func() {
 		select {
@@ -321,7 +309,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		// Send the key to chan for expiration after 1 minute to clean-up
 		go func(key string) {
 			<-time.After(time.Minute)
-			expiredKeyCh <- key
+			s.expiredSlotKeyCh <- key
 		}(k)
 	}
 	<-done

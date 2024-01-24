@@ -122,7 +122,7 @@ func main() {
 	// start streaming headers
 	go func(_ctx context.Context) {
 		wg := new(sync.WaitGroup)
-		svc.WrapStreamHeaders(_ctx, wg)
+		svc.StartStreamHeaders(_ctx, wg)
 	}(ctx)
 	if err := server.Start(); err != nil {
 		l.Fatal("failed to start mev-relay-proxy server", zap.Error(err))
