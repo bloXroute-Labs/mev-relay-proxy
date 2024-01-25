@@ -27,7 +27,9 @@ import (
 )
 
 const (
-	requestTimeout = 3 * time.Second
+	connReconnectTimeout = 5 * time.Second
+	requestTimeout       = 3 * time.Second
+	stateCheckerInterval = 5 * time.Second
 )
 
 type IService interface {
@@ -118,15 +120,15 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			}
 			out, err := c.RegisterValidator(clientCtx, req)
 			if err != nil {
-				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
+				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), "", id, "relay returned error", clientIP)
 				return
 			}
 			if out == nil {
-				errChan <- toErrorResp(http.StatusInternalServerError, "failed to register", id, "empty response from relay", clientIP)
+				errChan <- toErrorResp(http.StatusInternalServerError, "", "", id, "empty response from relay", clientIP)
 				return
 			}
 			if out.Code != uint32(codes.OK) {
-				errChan <- toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
+				errChan <- toErrorResp(http.StatusBadRequest, "", out.Message, id, "relay returned failure response code", clientIP)
 				return
 			}
 			respChan <- out
@@ -137,7 +139,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	for i := 0; i < len(s.clients); i++ {
 		select {
 		case <-ctx.Done():
-			return nil, nil, toErrorResp(http.StatusInternalServerError, "failed to register", id, ctx.Err().Error(), clientIP)
+			return nil, nil, toErrorResp(http.StatusInternalServerError, "", "failed to register", id, ctx.Err().Error(), clientIP)
 		case _err = <-errChan:
 			// if multiple client return errors, first error gets replaced by the subsequent errors
 		case <-respChan:
@@ -169,32 +171,6 @@ func (s *Service) handleStream(ctx context.Context, client *Client) {
 				s.logger.Warn("failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
 			}
 			time.Sleep(time.Second)
-		}
-	}
-}
-
-func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
-	parentSpan := trace.SpanFromContext(ctx)
-	parentSpan.SetAttributes(
-		attribute.String("method", "streamHeader"),
-		attribute.String("url", client.URL),
-	)
-	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
-	_, span := s.tracer.Start(spanCtx, "streamHeader")
-	defer span.End()
-
-	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Warn("Stream header context cancelled")
-			return
-		default:
-			if _, err := s.StreamHeader(ctx, client); err != nil {
-				s.logger.Warn("Failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
-			} else {
-				s.logger.Warn("Stream header stopped.  Sleeping 1 second and then reconnecting", zap.String("url", client.URL))
-			}
-			time.Sleep(1 * time.Second)
 		}
 	}
 }
@@ -381,7 +357,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	}
 	spanStoringHeader.End()
 	msg := fmt.Sprintf("header value is not present for the requested key %v", k)
-	return nil, k, toErrorResp(http.StatusNoContent, msg, id, msg, clientIP)
+	return nil, k, toErrorResp(http.StatusNoContent, "", "", id, msg, clientIP)
 }
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
@@ -427,15 +403,15 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 
 			out, err := c.GetPayload(clientCtx, req)
 			if err != nil {
-				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
+				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), "", id, "relay returned error", clientIP)
 				return
 			}
 			if out == nil {
-				errChan <- toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, "empty response from relay", clientIP)
+				errChan <- toErrorResp(http.StatusInternalServerError, "", "", id, "empty response from relay", clientIP)
 				return
 			}
 			if out.Code != uint32(codes.OK) {
-				errChan <- toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
+				errChan <- toErrorResp(http.StatusBadRequest, "", out.Message, id, "relay returned failure response code", clientIP)
 				return
 			}
 			// Set meta and send the response
@@ -447,7 +423,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	for i := 0; i < len(s.clients); i++ {
 		select {
 		case <-ctx.Done():
-			return nil, meta, toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, ctx.Err().Error(), clientIP)
+			return nil, meta, toErrorResp(http.StatusInternalServerError, "", "failed to getPayload", id, ctx.Err().Error(), clientIP)
 		case _err = <-errChan:
 			// if multiple client return errors, first error gets replaced by the subsequent errors
 		case out := <-respChan:
@@ -458,14 +434,16 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 }
 
 type ErrorResp struct {
-	Code        int    `json:"code"`
-	Message     string `json:"message"`
-	BlxrMessage BlxrMessage
+	Code        int         `json:"code"`
+	Message     string      `json:"message"`
+	BlxrMessage BlxrMessage `json:"blxrMessage"`
 }
 
 type BlxrMessage struct {
 	reqID    string
 	msg      string
+	relayMsg string
+	proxyMsg string
 	clientIP string
 }
 
@@ -473,13 +451,15 @@ func (e *ErrorResp) Error() string {
 	return e.Message
 }
 
-func toErrorResp(code int, message, reqID, blxrMessage, clientIP string) *ErrorResp {
+func toErrorResp(code int, relayMsg, proxyMsg, reqID, msg, clientIP string) *ErrorResp {
 	return &ErrorResp{
 		Code:    code,
-		Message: message,
+		Message: msg,
 		BlxrMessage: BlxrMessage{
 			reqID:    reqID,
-			msg:      blxrMessage,
+			msg:      msg,
+			relayMsg: relayMsg,
+			proxyMsg: proxyMsg,
 			clientIP: clientIP,
 		},
 	}

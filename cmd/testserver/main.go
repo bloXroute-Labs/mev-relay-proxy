@@ -29,8 +29,7 @@ func main() {
 	srv := grpc.NewServer(grpc.UnaryInterceptor(registerClientConnectionInterceptor(l)))
 	relaygrpc.RegisterRelayServer(srv, &mockRelayServer{logger: l})
 	reflection.Register(srv)
-
-	//nolint:staticcheck // SA1019 grpclog.SetLogger is deprecated: use SetLoggerV2 // intentionally used setLogger v1
+	//lint:ignore SA1019  intentionally used setLogger v1
 	grpclog.SetLogger(log.New(os.Stdout, "grpc: ", log.LstdFlags))
 	exit := make(chan struct{})
 	go func() {
