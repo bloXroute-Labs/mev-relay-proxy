@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
 	"io"
 	"math/big"
 	"net/http"
 	"sync"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -97,15 +98,15 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			}
 			out, err := c.RegisterValidator(clientCtx, req)
 			if err != nil {
-				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
+				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), "", id, "relay returned error", clientIP)
 				return
 			}
 			if out == nil {
-				errChan <- toErrorResp(http.StatusInternalServerError, "failed to register", id, "empty response from relay", clientIP)
+				errChan <- toErrorResp(http.StatusInternalServerError, "", "", id, "empty response from relay", clientIP)
 				return
 			}
 			if out.Code != uint32(codes.OK) {
-				errChan <- toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
+				errChan <- toErrorResp(http.StatusBadRequest, "", out.Message, id, "relay returned failure response code", clientIP)
 				return
 			}
 			respChan <- out
@@ -116,7 +117,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	for i := 0; i < len(s.clients); i++ {
 		select {
 		case <-ctx.Done():
-			return nil, nil, toErrorResp(http.StatusInternalServerError, "failed to register", id, ctx.Err().Error(), clientIP)
+			return nil, nil, toErrorResp(http.StatusInternalServerError, "", "", id, ctx.Err().Error(), clientIP)
 		case _err = <-errChan:
 			// if multiple client return errors, first error gets replaced by the subsequent errors
 		case <-respChan:
@@ -301,7 +302,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
-	return nil, k, toErrorResp(http.StatusNoContent, "", id, fmt.Sprintf("header value is not present for the requested key %v", k), clientIP)
+	return nil, k, toErrorResp(http.StatusNoContent, "", "", id, fmt.Sprintf("header value is not present for the requested key %v", k), clientIP)
 }
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
@@ -333,15 +334,15 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 
 			out, err := c.GetPayload(clientCtx, req)
 			if err != nil {
-				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
+				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), "", id, "relay returned error", clientIP)
 				return
 			}
 			if out == nil {
-				errChan <- toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, "empty response from relay", clientIP)
+				errChan <- toErrorResp(http.StatusInternalServerError, "", "", id, "empty response from relay", clientIP)
 				return
 			}
 			if out.Code != uint32(codes.OK) {
-				errChan <- toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
+				errChan <- toErrorResp(http.StatusBadRequest, "", out.Message, id, "relay returned failure response code", clientIP)
 				return
 			}
 			// Set meta and send the response
@@ -353,7 +354,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	for i := 0; i < len(s.clients); i++ {
 		select {
 		case <-ctx.Done():
-			return nil, meta, toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, ctx.Err().Error(), clientIP)
+			return nil, meta, toErrorResp(http.StatusInternalServerError, "", "failed to getPayload", id, ctx.Err().Error(), clientIP)
 		case _err = <-errChan:
 			// if multiple client return errors, first error gets replaced by the subsequent errors
 		case out := <-respChan:
@@ -364,14 +365,16 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 }
 
 type ErrorResp struct {
-	Code        int    `json:"code"`
-	Message     string `json:"message"`
-	BlxrMessage BlxrMessage
+	Code        int         `json:"code"`
+	Message     string      `json:"message"`
+	BlxrMessage BlxrMessage `json:"blxrMessage"`
 }
 
 type BlxrMessage struct {
 	reqID    string
 	msg      string
+	relayMsg string
+	proxyMsg string
 	clientIP string
 }
 
@@ -379,13 +382,15 @@ func (e *ErrorResp) Error() string {
 	return e.Message
 }
 
-func toErrorResp(code int, message, reqID, blxrMessage, clientIP string) *ErrorResp {
+func toErrorResp(code int, relayMsg, proxyMsg, reqID, msg, clientIP string) *ErrorResp {
 	return &ErrorResp{
 		Code:    code,
-		Message: message,
+		Message: msg,
 		BlxrMessage: BlxrMessage{
 			reqID:    reqID,
-			msg:      blxrMessage,
+			msg:      msg,
+			relayMsg: relayMsg,
+			proxyMsg: proxyMsg,
 			clientIP: clientIP,
 		},
 	}

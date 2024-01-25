@@ -89,7 +89,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	authHeader := r.Header.Get("authorization")
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		respondError(registration, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "could not read registration", ""), s.logger, nil)
+		respondError(registration, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "", "could not read registration", ""), s.logger, nil)
 		return
 	}
 	out, metaData, err := s.svc.RegisterValidator(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
@@ -121,7 +121,7 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "could not read getPayload", ""), s.logger, nil)
+		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "", "could not read getPayload", ""), s.logger, nil)
 		return
 	}
 	out, metaData, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP)
@@ -154,10 +154,23 @@ func respondError(method string, w http.ResponseWriter, err error, log *zap.Logg
 		meta = metaData.(string)
 	}
 	w.WriteHeader(resp.Code)
-	log.With(zap.String("req_id", resp.BlxrMessage.reqID), zap.String("blxr_message", resp.BlxrMessage.msg), zap.String("client_ip", resp.BlxrMessage.clientIP), zap.String("resp_message", resp.Message), zap.Int("resp_code", resp.Code)).Error(fmt.Sprintf("%s failed", method), zap.String("metaData", meta))
+
+	log.With(
+		zap.String("req_id", resp.BlxrMessage.reqID),
+		zap.String("blxr_message", resp.BlxrMessage.msg),
+		zap.String("client_ip", resp.BlxrMessage.clientIP),
+		zap.Int("resp_code", resp.Code),
+	).Error(fmt.Sprintf("%s failed", method), zap.String("metaData", meta))
+
 	if resp.Message != "" {
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			log.With(zap.String("req_id", resp.BlxrMessage.reqID), zap.String("blxr_message", resp.BlxrMessage.msg), zap.String("client_ip", resp.BlxrMessage.clientIP), zap.String("resp_message", resp.Message), zap.Int("resp_code", resp.Code)).Error("couldn't write error response", zap.Error(err), zap.String("metaData", meta))
+			log.With(
+				zap.String("req_id", resp.BlxrMessage.reqID),
+				zap.String("blxr_message", resp.BlxrMessage.msg),
+				zap.String("message", resp.Message),
+				zap.String("client_ip", resp.BlxrMessage.clientIP),
+				zap.Int("resp_code", resp.Code),
+			).Error("couldn't write error response", zap.Error(err), zap.String("metaData", meta))
 			http.Error(w, "", http.StatusInternalServerError)
 		}
 	}

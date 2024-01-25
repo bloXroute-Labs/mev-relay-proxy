@@ -68,7 +68,7 @@ func TestServer_HandleRegistration(t *testing.T) {
 			mockService: &MockService{
 				logger: zap.NewNop(),
 				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, any, error) {
-					return nil, nil, toErrorResp(http.StatusInternalServerError, "failed to register", "", "failed", "")
+					return nil, nil, toErrorResp(http.StatusInternalServerError, "", "failed to register", "", "failed to register", "")
 				},
 			},
 			expectedCode:  http.StatusInternalServerError,
@@ -181,7 +181,7 @@ func TestServer_HandleGetPayload(t *testing.T) {
 			mockService: &MockService{
 				logger: zap.NewNop(),
 				GetPayloadFunc: func(ctx context.Context, payload []byte, clientIP string) (any, any, error) {
-					return nil, nil, toErrorResp(http.StatusInternalServerError, "failed to getPayload", "", "failed", "")
+					return nil, nil, toErrorResp(http.StatusInternalServerError, "", "failed to getPayload", "", "failed to getPayload", "")
 				},
 			},
 			expectedCode:  http.StatusInternalServerError,
