@@ -526,8 +526,8 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 }
 
 type ErrorResp struct {
-	Code        int         `json:"code"`
-	Message     string      `json:"message"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 
 	BlxrMessage BlxrMessage `json:"-"`
 }

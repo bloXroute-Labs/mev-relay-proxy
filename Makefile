@@ -15,9 +15,6 @@ v:
 build:
 	go build -ldflags "-X main._BuildVersion=${VERSION} -X main._SecretToken=${SECRET_TOKEN}" -v -o ${REPO} ${MAIN_FILE}
 
-fmt:
-	gofmt -s -w .
-
 .PHONY: test
 test:
 	go test ./...
