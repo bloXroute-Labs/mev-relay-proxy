@@ -8,11 +8,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
+	"github.com/go-chi/chi"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/go-chi/chi/v5"
-
 	"go.uber.org/zap"
 )
 
@@ -33,24 +32,24 @@ var (
 )
 
 type Server struct {
-	logger         *zap.Logger
-	server         *http.Server
-	svc            IService
-	listenAddress  string
-	getHeaderDelay int
-	tracer         trace.Tracer
-
+	logger            *zap.Logger
+	server            *http.Server
+	svc               IService
+	listenAddress     string
+	getHeaderDelay    int
+	tracer            trace.Tracer
+	fluentD           fluentstats.Stats
 	beaconGenesisTime int64
 }
 
-func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, tracer trace.Tracer, beaconGenesisTime int64) *Server {
+func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, tracer trace.Tracer, fluentD fluentstats.Stats, beaconGenesisTime int64) *Server {
 	return &Server{
-		logger:         logger,
-		svc:            svc,
-		listenAddress:  listenAddress,
-		getHeaderDelay: getHeaderDelay,
-		tracer:         tracer,
-
+		logger:            logger,
+		svc:               svc,
+		listenAddress:     listenAddress,
+		getHeaderDelay:    getHeaderDelay,
+		tracer:            tracer,
+		fluentD:           fluentD,
 		beaconGenesisTime: beaconGenesisTime,
 	}
 }
@@ -252,17 +251,23 @@ func respondError(method string, w http.ResponseWriter, err error, log *zap.Logg
 
 	defer childSpan.End()
 
-	resp := err.(*ErrorResp)
 	var meta string
 	if metaData != nil {
 		meta = metaData.(string)
 	}
+	resp, ok := err.(*ErrorResp)
+	if !ok {
+		log.With(zap.String("req_id", resp.BlxrMessage.reqID), zap.String("blxr_message", resp.BlxrMessage.msg), zap.String("client_ip", resp.BlxrMessage.clientIP), zap.String("resp_message", resp.Message), zap.Int("resp_code", resp.Code)).Error("failed to typecast error response", zap.String("metaData", meta))
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(resp.Code)
 	log.With(zap.String("req_id", resp.BlxrMessage.reqID), zap.String("blxr_message", resp.BlxrMessage.msg), zap.String("client_ip", resp.BlxrMessage.clientIP), zap.String("resp_message", resp.Message), zap.Int("resp_code", resp.Code)).Error(fmt.Sprintf("%s failed", method), zap.String("metaData", meta))
-	if resp.Message != "" {
+	if resp.Message != "" && resp.Code != http.StatusNoContent { // HTTP status "No Content" implies that no message body should be included in the response.
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			log.With(zap.String("req_id", resp.BlxrMessage.reqID), zap.String("blxr_message", resp.BlxrMessage.msg), zap.String("client_ip", resp.BlxrMessage.clientIP), zap.String("resp_message", resp.Message), zap.Int("resp_code", resp.Code)).Error("couldn't write error response", zap.Error(err), zap.String("metaData", meta))
-			http.Error(w, "", http.StatusInternalServerError)
+			_, _ = w.Write([]byte(``))
 			return
 		}
 		return

@@ -3,6 +3,7 @@
 
 # Ignore build folder
 bloxroute/
+mev-relay-proxy
 
 # Ignore swp files
 *.swp

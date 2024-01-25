@@ -134,6 +134,23 @@ func TestServer_HandleGetHeader(t *testing.T) {
 			expectedCode:   http.StatusNoContent,
 			expectedOutput: "",
 		},
+		"when getHeader failed with requested header not found": {
+			slot:       "456",
+			parentHash: "ph456",
+			pubKey:     "pk456",
+			mockService: &MockService{
+				logger: zap.NewNop(),
+				GetHeaderFunc: func(ctx context.Context, clientIP, slot, parentHash, pubKey string) (interface{}, any, error) {
+					return nil, nil, &ErrorResp{Code: http.StatusNoContent, Message: "header value is not present for the requested key slot", BlxrMessage: BlxrMessage{
+						reqID:    "dummy-id",
+						msg:      "header value is not present for the requested key slot",
+						clientIP: "0.0.0.0",
+					}}
+				},
+			},
+			expectedCode:   http.StatusNoContent,
+			expectedOutput: "",
+		},
 	}
 
 	for testName, tc := range testCases {
