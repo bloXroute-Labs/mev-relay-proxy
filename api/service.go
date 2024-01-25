@@ -388,7 +388,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 					"succeeded":  true,
 					"nodeID":     s.nodeID,
 				},
-			}, time.Now().UTC(), "relay-proxy-getHeader")
+			}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
 		}()
 
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
@@ -411,7 +411,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 				"succeeded":         false,
 				"nodeID":            s.nodeID,
 			},
-		}, time.Now().UTC(), "relay-proxy-getHeader")
+		}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
 	}()
 	return nil, k, toErrorResp(http.StatusNoContent, "", "", id, msg, clientIP)
 }
@@ -496,7 +496,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 						"succeeded":         false,
 						"nodeID":            s.nodeID,
 					},
-				}, time.Now().UTC(), "relay-proxy-getPayload")
+				}, time.Now().UTC(), s.nodeID, "relay-proxy-getPayload")
 			}()
 			return nil, meta, toErrorResp(http.StatusInternalServerError, "", "failed to getPayload", id, ctx.Err().Error(), clientIP)
 		case _err = <-errChan:
@@ -517,7 +517,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 						"succeeded":         true,
 						"nodeID":            s.nodeID,
 					},
-				}, time.Now().UTC(), "relay-proxy-getPayload")
+				}, time.Now().UTC(), s.nodeID, "relay-proxy-getPayload")
 			}()
 			return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
 		}

@@ -25,12 +25,13 @@ type LogRecord struct {
 	Level     string `json:"level"`
 	Name      string `json:"name"`
 	Msg       Record `json:"msg"`
+	NodeID    string `json:"node_id"`
 	Timestamp string `json:"timestamp"`
 }
 
 // Stats is used to generate STATS records
 type Stats interface {
-	LogToFluentD(record Record, ts time.Time, logName string)
+	LogToFluentD(record Record, ts time.Time, nodeID string, logName string)
 }
 
 // NoStats is used to generate empty stats
@@ -38,7 +39,7 @@ type NoStats struct {
 }
 
 // LogToFluentD implements Stats.
-func (NoStats) LogToFluentD(record Record, ts time.Time, logName string) {
+func (NoStats) LogToFluentD(record Record, ts time.Time, nodeID string, logName string) {
 	panic("unimplemented")
 }
 
@@ -57,11 +58,12 @@ func NewStats(fluentDEnabled bool, fluentDHost string) Stats {
 }
 
 // LogToFluentD log info to the fluentd
-func (s FluentdStats) LogToFluentD(record Record, ts time.Time, logName string) {
+func (s FluentdStats) LogToFluentD(record Record, ts time.Time, nodeID string, logName string) {
 	d := LogRecord{
 		Level:     "STATS",
 		Name:      logName,
 		Msg:       record,
+		NodeID:    nodeID,
 		Timestamp: ts.Format(DateFormat),
 	}
 
