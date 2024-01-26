@@ -37,15 +37,16 @@ var (
 
 	listenAddr = flag.String("addr", defaultListenAddr, "mev-relay-proxy server listening address")
 	//lint:ignore U1000 Ignore unused variable
-	relayGRPCURL       = flag.String("relay", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "relay grpc URL")
-	relaysGRPCURL      = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
-	getHeaderDelayInMS = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
-	authKey            = flag.String("auth-key", "", "account authentication key")
-	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
-	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
+	relayGRPCURL          = flag.String("relay", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "relay grpc URL")
+	relaysGRPCURL         = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
+	getHeaderDelayInMS    = flag.Int64("get-header-delay-ms", 500, "delay for sending the getHeader request in millisecond")
+	getHeaderMaxDelayInMS = flag.Int64("get-header-max-delay-ms", 1200, "max delay for sending the getHeader request in millisecond")
+	authKey               = flag.String("auth-key", "", "account authentication key")
+	nodeID                = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
+	uptraceDSN            = flag.String("uptrace-dsn", "", "uptrace URL")
 	// fluentD
 	fluentDHostFlag   = flag.String("fluentd-host", "", "fluentd host")
-	beaconGenesisTime = flag.Int64("beacon-genesis-time", 1606824023, "beacon genesis time in unix timestamp")
+	beaconGenesisTime = flag.Int64("beacon-genesis-time", 1606824023, "beacon genesis time in unix timestamp, default value set to mainnet")
 )
 
 func main() {
@@ -86,7 +87,17 @@ func main() {
 		}
 	}()
 
-	l.Info("starting mev-relay-proxy server", zap.String("listenAddr", *listenAddr), zap.String("uptraceDSN", *uptraceDSN), zap.String("nodeID", *nodeID), zap.String("authKey", *authKey), zap.String("relaysGRPCURL", *relaysGRPCURL), zap.Int("getHeaderDelayInMS", *getHeaderDelayInMS))
+	l.Info("starting mev-relay-proxy server",
+		zap.String("listenAddr", *listenAddr),
+		zap.String("uptraceDSN", *uptraceDSN),
+		zap.String("nodeID", *nodeID),
+		zap.String("authKey", *authKey),
+		zap.String("relaysGRPCURL", *relaysGRPCURL),
+		zap.Int64("getHeaderDelayInMS", *getHeaderDelayInMS),
+		zap.Int64("getHeaderMaxDelayInMS", *getHeaderMaxDelayInMS),
+		zap.String("fluentDHostFlag", *fluentDHostFlag),
+		zap.Int64("beaconGenesisTime", *beaconGenesisTime),
+	)
 
 	// Configure OpenTelemetry with sensible defaults.
 	uptrace.ConfigureOpentelemetry(
@@ -110,7 +121,7 @@ func main() {
 
 	// init service and server
 	svc := api.NewService(l, tracer, _BuildVersion, *nodeID, *authKey, _SecretToken, fluentLogger, clients...)
-	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer, fluentLogger, *beaconGenesisTime)
+	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, *getHeaderMaxDelayInMS, *beaconGenesisTime, tracer, fluentLogger)
 
 	exit := make(chan struct{})
 	go func() {

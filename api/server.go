@@ -32,25 +32,31 @@ var (
 )
 
 type Server struct {
-	logger            *zap.Logger
-	server            *http.Server
-	svc               IService
-	listenAddress     string
-	getHeaderDelay    int
-	tracer            trace.Tracer
-	fluentD           fluentstats.Stats
+	logger        *zap.Logger
+	server        *http.Server
+	svc           IService
+	listenAddress string
+
+	getHeaderDelay    int64
+	getHeaderMaxDelay int64
 	beaconGenesisTime int64
+
+	tracer  trace.Tracer
+	fluentD fluentstats.Stats
 }
 
-func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay int, tracer trace.Tracer, fluentD fluentstats.Stats, beaconGenesisTime int64) *Server {
+func New(logger *zap.Logger, svc *Service, listenAddress string, getHeaderDelay, getHeaderMaxDelay, beaconGenesisTime int64, tracer trace.Tracer, fluentD fluentstats.Stats) *Server {
 	return &Server{
-		logger:            logger,
-		svc:               svc,
-		listenAddress:     listenAddress,
+		logger:        logger,
+		svc:           svc,
+		listenAddress: listenAddress,
+
 		getHeaderDelay:    getHeaderDelay,
-		tracer:            tracer,
-		fluentD:           fluentD,
+		getHeaderMaxDelay: getHeaderMaxDelay,
 		beaconGenesisTime: beaconGenesisTime,
+
+		tracer:  tracer,
+		fluentD: fluentD,
 	}
 }
 
@@ -153,7 +159,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	slotInt := s.AToI(slot)
 	slotStartTime := s.GetSlotStartTime(slotInt)
 
-	sleep, maxSleep := s.GetSleepParams(r)
+	sleep, maxSleep := s.GetSleepParams(r, s.getHeaderDelay, s.getHeaderMaxDelay)
 
 	parentSpan := trace.SpanFromContext(r.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
