@@ -61,7 +61,7 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, secretToken string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, clients ...*Client) *Service {
 	return &Service{
 		logger:      logger,
 		version:     version,
@@ -106,6 +106,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		go func(c *Client) {
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
+			s.logger.Info("sending request to relay", zap.String("Secret Token", s.secretToken))
 			req := &relaygrpc.RegisterValidatorRequest{
 				ReqId:       id,
 				Payload:     payload,
