@@ -407,6 +407,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	_, span := s.tracer.Start(parentSpanCtx, "getPayload")
 	defer span.End()
 
+	s.logger.Info("sending request to relay", zap.String("Secret Token", s.secretToken))
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:       id,
 		Payload:     payload,
