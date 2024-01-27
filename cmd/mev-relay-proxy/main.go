@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/bloXroute-Labs/mev-relay-proxy/api"
+	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	"github.com/google/uuid"
 
 	"time"
@@ -42,7 +43,8 @@ var (
 	authKey            = flag.String("auth-key", "", "account authentication key")
 	nodeID             = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
 	uptraceDSN         = flag.String("uptrace-dsn", "", "uptrace URL")
-
+	// fluentD
+	fluentDHostFlag   = flag.String("fluentd-host", "", "fluentd host")
 	beaconGenesisTime = flag.Int64("beacon-genesis-time", 1606824023, "beacon genesis time in unix timestamp")
 )
 
@@ -103,9 +105,12 @@ func main() {
 
 	tracer := otel.Tracer("main")
 
+	// init fluentD if enabled
+	fluentLogger := fluentstats.NewStats(true, *fluentDHostFlag)
+
 	// init service and server
-	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, clients...)
-	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer, *beaconGenesisTime)
+	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, fluentLogger, clients...)
+	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer, fluentLogger, *beaconGenesisTime)
 
 	exit := make(chan struct{})
 	go func() {
@@ -122,7 +127,7 @@ func main() {
 	// start streaming headers
 	go func(_ctx context.Context) {
 		wg := new(sync.WaitGroup)
-		svc.WrapStreamHeaders(_ctx, wg)
+		svc.StartStreamHeaders(_ctx, wg)
 	}(ctx)
 	if err := server.Start(); err != nil {
 		l.Fatal("failed to start mev-relay-proxy server", zap.Error(err))

@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bloXroute-Labs/gateway/v2/utils/syncmap"
+	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -36,16 +37,17 @@ type IService interface {
 	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error)
 }
 type Service struct {
-	logger  *zap.Logger
-	version string // build version
-	headers *syncmap.SyncMap[string, []*Header]
-	clients []*Client
-	nodeID  string // UUID
-	//slotCleanUpCh chan uint64
-	authKey      string
-	secretToken  string
-	isStreamOpen bool
-	tracer       trace.Tracer
+	logger           *zap.Logger
+	version          string // build version
+	headers          *syncmap.SyncMap[string, []*Header]
+	clients          []*Client
+	nodeID           string // UUID
+	authKey          string
+	secretToken      string
+	isStreamOpen     bool
+	tracer           trace.Tracer
+	fluentD          fluentstats.Stats
+	expiredSlotKeyCh chan string
 }
 
 type Client struct {
@@ -61,16 +63,18 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, fluentD fluentstats.Stats, clients ...*Client) *Service {
 	return &Service{
-		logger:      logger,
-		version:     version,
-		clients:     clients,
-		headers:     syncmap.NewStringMapOf[[]*Header](),
-		nodeID:      nodeID,
-		authKey:     authKey,
-		secretToken: secretToken,
-		tracer:      tracer,
+		logger:           logger,
+		version:          version,
+		clients:          clients,
+		headers:          syncmap.NewStringMapOf[[]*Header](),
+		nodeID:           nodeID,
+		authKey:          authKey,
+		secretToken:      secretToken,
+		tracer:           tracer,
+		fluentD:          fluentD,
+		expiredSlotKeyCh: make(chan string, 100),
 	}
 }
 
@@ -88,6 +92,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
+
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 
 	parentSpan := trace.SpanFromContext(ctx)
@@ -148,7 +153,12 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	return nil, nil, _err
 }
 
-func (s *Service) WrapStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
+func (s *Service) StartStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
+
+	// Periodically clean up headers
+	go s.cleanUpExpiredHeaders(s.expiredSlotKeyCh)
+	defer close(s.expiredSlotKeyCh)
+
 	for _, client := range s.clients {
 		wg.Add(1)
 		go func(_ctx context.Context, c *Client) {
@@ -160,21 +170,6 @@ func (s *Service) WrapStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (s *Service) handleStream(ctx context.Context, client *Client) {
-	for {
-		select {
-		case <-ctx.Done():
-			s.logger.Warn("stream header context cancelled")
-			return
-		default:
-			if _, err := s.StreamHeader(ctx, client); err != nil {
-				s.logger.Warn("failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
-			}
-			time.Sleep(time.Second)
-		}
-	}
-}
-
-func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
 	parentSpan := trace.SpanFromContext(ctx)
 	parentSpan.SetAttributes(
 		attribute.String("method", "streamHeader"),
@@ -187,13 +182,13 @@ func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.logger.Warn("Stream header context cancelled")
+			s.logger.Warn("stream header context cancelled")
 			return
 		default:
 			if _, err := s.StreamHeader(ctx, client); err != nil {
-				s.logger.Warn("Failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
+				s.logger.Warn("failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
 			} else {
-				s.logger.Warn("Stream header stopped.  Sleeping 1 second and then reconnecting", zap.String("url", client.URL))
+				s.logger.Warn("stream header stopped.  Sleeping 1 second and then reconnecting", zap.String("url", client.URL))
 			}
 			time.Sleep(1 * time.Second)
 		}
@@ -239,10 +234,6 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			close(done)
 		})
 	}
-
-	// Periodically clean up headers
-	expiredKeyCh := make(chan string, 100)
-	go s.cleanUpExpiredHeaders(expiredKeyCh)
 
 	go func() {
 		select {
@@ -321,10 +312,11 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		h := make([]*Header, 0)
 		h = append(h, v)
 		s.headers.Store(k, h)
+
 		// Send the key to chan for expiration after 1 minute to clean-up
 		go func(key string) {
 			<-time.After(time.Minute)
-			expiredKeyCh <- key
+			s.expiredSlotKeyCh <- key
 		}(k)
 	}
 	<-done
@@ -340,6 +332,7 @@ func (s *Service) cleanUpExpiredHeaders(expiredKeyCh <-chan string) {
 }
 
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
+	startTime := time.Now().UTC()
 	k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", slot, parentHash, pubKey)
 	id := uuid.NewString()
 	parentSpan := trace.SpanFromContext(ctx)
@@ -350,6 +343,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		zap.String("key", k),
 		zap.String("reqID", id),
 	)
+
 	parentSpan.SetAttributes(
 		attribute.String("method", "getHeader"),
 		attribute.String("clientIP", clientIP),
@@ -377,15 +371,50 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			}
 		}
 		out := headers[index]
+		go func() {
+			s.fluentD.LogToFluentD(fluentstats.Record{
+				Type: "relay_proxy_provided_header",
+				Data: map[string]interface{}{
+					"received":   receivedAt,
+					"duration":   time.Since(startTime),
+					"parentHash": parentHash,
+					"pubKey":     pubKey,
+					"blockHash":  out.BlockHash,
+					"reqID":      id,
+					"clientIP":   clientIP,
+					"blockValue": val.String(),
+					"succeeded":  true,
+					"nodeID":     s.nodeID,
+				},
+			}, time.Now().UTC(), "relay-proxy-getHeader")
+		}()
 
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
 	spanStoringHeader.End()
 	msg := fmt.Sprintf("header value is not present for the requested key %v", k)
+	go func() {
+		s.fluentD.LogToFluentD(fluentstats.Record{
+			Type: "relay_proxy_provided_header",
+			Data: map[string]interface{}{
+				"RequestReceivedAt": receivedAt,
+				"duration":          time.Since(startTime),
+				"parentHash":        parentHash,
+				"pubKey":            pubKey,
+				"blockHash":         "",
+				"reqID":             id,
+				"clientIP":          clientIP,
+				"blockValue":        "",
+				"succeeded":         false,
+				"nodeID":            s.nodeID,
+			},
+		}, time.Now().UTC(), "relay-proxy-getHeader")
+	}()
 	return nil, k, toErrorResp(http.StatusNoContent, msg, id, msg, clientIP)
 }
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
+	startTime := time.Now().UTC()
 	id := uuid.NewString()
 	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
@@ -449,10 +478,44 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	for i := 0; i < len(s.clients); i++ {
 		select {
 		case <-ctx.Done():
+			go func() {
+				s.fluentD.LogToFluentD(fluentstats.Record{
+					Type: "relay_proxy_provided_payload",
+					Data: map[string]interface{}{
+						"RequestReceivedAt": receivedAt,
+						"duration":          time.Since(startTime),
+						"slot":              "",
+						"parentHash":        "",
+						"pubKey":            "",
+						"blockHash":         "",
+						"reqID":             id,
+						"clientIP":          clientIP,
+						"succeeded":         false,
+						"nodeID":            s.nodeID,
+					},
+				}, time.Now().UTC(), "relay-proxy-getPayload")
+			}()
 			return nil, meta, toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, ctx.Err().Error(), clientIP)
 		case _err = <-errChan:
 			// if multiple client return errors, first error gets replaced by the subsequent errors
 		case out := <-respChan:
+			go func() {
+				s.fluentD.LogToFluentD(fluentstats.Record{
+					Type: "relay_proxy_provided_payload",
+					Data: map[string]interface{}{
+						"RequestReceivedAt": receivedAt,
+						"duration":          time.Since(startTime),
+						"slot":              out.GetSlot(),
+						"parentHash":        out.GetParentHash(),
+						"pubKey":            out.GetPubkey(),
+						"blockHash":         out.GetBlockHash(),
+						"reqID":             id,
+						"clientIP":          clientIP,
+						"succeeded":         true,
+						"nodeID":            s.nodeID,
+					},
+				}, time.Now().UTC(), "relay-proxy-getPayload")
+			}()
 			return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
 		}
 	}
@@ -460,9 +523,9 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 }
 
 type ErrorResp struct {
-	Code        int    `json:"code"`
-	Message     string `json:"message"`
-	BlxrMessage BlxrMessage
+	Code        int         `json:"code"`
+	Message     string      `json:"message"`
+	BlxrMessage BlxrMessage `json:"-"`
 }
 
 type BlxrMessage struct {

@@ -6,7 +6,9 @@ require (
 	github.com/attestantio/go-builder-client v0.4.2
 	github.com/bloXroute-Labs/gateway/v2 v2.127.75-0.20231129102830-ab252898d3c3
 	github.com/bloXroute-Labs/relay-grpc v0.0.15-0.20240126175648-cd9c625795ab
-	github.com/go-chi/chi/v5 v5.0.10
+	github.com/ethereum/go-ethereum v1.13.1
+	github.com/fluent/fluent-logger-golang v1.9.0
+	github.com/go-chi/chi v1.5.5
 	github.com/google/uuid v1.3.1
 	github.com/uptrace/uptrace-go v1.21.0
 	go.opentelemetry.io/otel v1.21.0
@@ -29,11 +31,9 @@ require (
 	github.com/crate-crypto/go-kzg-4844 v0.7.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
 	github.com/ethereum/c-kzg-4844/bindings/go v0.0.0-20230126171313-363c7d7593b4 // indirect
-	github.com/ethereum/go-ethereum v1.13.4 // indirect
 	github.com/evalphobia/logrus_fluent v0.5.4 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/ferranbt/fastssz v0.1.3 // indirect
-	github.com/fluent/fluent-logger-golang v1.9.0 // indirect
 	github.com/go-logr/logr v1.3.0 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-stack/stack v1.8.1 // indirect
