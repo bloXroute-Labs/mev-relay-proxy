@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 
 	"fmt"
@@ -10,12 +11,19 @@ import (
 	eth2ApiV1Deneb "github.com/attestantio/go-eth2-client/api/v1/deneb"
 	"github.com/attestantio/go-eth2-client/spec"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common/hexutil"
+
 	"go.uber.org/zap"
+)
+
+const (
+	weiToEthSignificantDigits = 18
 )
 
 // decodeJSON reads JSON from io.Reader and decodes it into a struct
@@ -138,4 +146,22 @@ func (r *VersionedSignedBlindedBeaconBlock) UnmarshalJSON(input []byte) error {
 		return nil
 	}
 	return fmt.Errorf("failed to unmarshal SignedBlindedBeaconBlock : %v", err)
+}
+func WeiToEth(valueString string) string {
+	numDigits := len(valueString)
+	missing := int(math.Max(0, float64((weiToEthSignificantDigits+1)-numDigits)))
+	prefix := "0000000000000000000"[:missing]
+	ethValue := prefix + valueString
+	decimalIndex := len(ethValue) - weiToEthSignificantDigits
+	return ethValue[:decimalIndex] + "." + ethValue[decimalIndex:]
+}
+
+// DecodeExtraData returns a decoded string from block ExtraData
+func DecodeExtraData(extraData []byte) string {
+	extraDataString := hexutil.Bytes(extraData).String()
+	decodedExtraData, err := hex.DecodeString(strings.TrimPrefix(extraDataString, "0x"))
+	if err != nil {
+		return ""
+	}
+	return string(decodedExtraData)
 }

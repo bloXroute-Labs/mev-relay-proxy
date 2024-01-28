@@ -3,9 +3,14 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/attestantio/go-builder-client/spec"
+	"github.com/bloXroute-Labs/gateway/v2/utils/syncmap"
+	"github.com/patrickmn/go-cache"
+	"google.golang.org/grpc/credentials/insecure"
 	"io"
 	"math/big"
 	"net"
@@ -16,14 +21,32 @@ import (
 	"testing"
 	"time"
 
-	"github.com/attestantio/go-builder-client/spec"
 	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
+	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"gotest.tools/assert"
+)
+
+const (
+	testNodeID                = ""
+	testParentHash            = "0x736f7e43b0b9d840d9152e7a5426f8d876a33f3ba52300bbd2923c9c7d5b62dc"
+	testProposerPubkey        = "0x932c01d6fdb20b882983a74fd0d140015e7d6f6ca783209aad778507e62dc92143238484257f9aa39fb90f01f6b5ecdf"
+	testBuilderPubkey1        = "0xae147691b534e441597cbd6a479aaa662126ca8426457737e895ae33251ea048d2d94bd18800999d6b04b1ace560be50"
+	testBuilderPubkey2        = "0xb9451d2bc9d8c82d88da94da16ea30435dfc9c0de14bf7eb2a5bd3c0774a9a99c3136914679d9a11d214bec1e46f55a0"
+	testBuilderPubkey3        = "0x8265169a40b57b91ad258817217f3edeeb3d648a4a61ef0bc125b2c23ac72be1c31dff632a2aa5d58b86203d4c3e5c43"
+	testSlot1          uint64 = 1
+	testSlot2          uint64 = 2
+	testValueLow       int64  = 1
+	testValueMedium    int64  = 10
+	testValueHigh      int64  = 100
+)
+
+var (
+	testBlockHash1 = [32]byte{0x0000000000000000000000000000000000000000000000000000000000000001}
+	testBlockHash2 = [32]byte{0x0000000000000000000000000000000000000000000000000000000000000002}
+	testBlockHash3 = [32]byte{0x0000000000000000000000000000000000000000000000000000000000000003}
 )
 
 const (
@@ -80,6 +103,54 @@ func TestService_RegisterValidator(t *testing.T) {
 		})
 	}
 }
+
+func TestService_GetHeader(t *testing.T) {
+
+	tests := map[string]struct {
+		slot       string
+		parentHash string
+		pubKey     string
+		wantErr    *ErrorResp
+	}{
+		"invalid slot ": {
+			slot: "xyz",
+			wantErr: &ErrorResp{
+				Code:    http.StatusNoContent,
+				Message: errInvalidSlot.Error(),
+			},
+		},
+		"invalid pubKey ": {
+			slot:   "123",
+			pubKey: "dummy-pubkey",
+			wantErr: &ErrorResp{
+				Code:    http.StatusNoContent,
+				Message: errInvalidPubkey.Error(),
+			},
+		},
+		"invalid parent hash": {
+			slot:       "123",
+			pubKey:     testBuilderPubkey1,
+			parentHash: "dummy-parent-hash",
+			wantErr: &ErrorResp{
+				Code:    http.StatusNoContent,
+				Message: errInvalidHash.Error(),
+			},
+		},
+	}
+	for testName, tt := range tests {
+		t.Run(testName, func(t *testing.T) {
+			s := &Service{
+				logger:  zap.NewNop(),
+				clients: []*Client{{"", "", nil, &mockRelayClient{}}},
+				tracer:  noop.NewTracerProvider().Tracer("test"),
+				fluentD: fluentstats.NewStats(true, "0.0.0.0:24224"),
+			}
+			_, _, err := s.GetHeader(context.Background(), time.Now(), "ip", tt.slot, tt.parentHash, tt.pubKey, "")
+			assert.Equal(t, err.Error(), tt.wantErr.Error())
+		})
+	}
+}
+
 func TestService_getPayload(t *testing.T) {
 
 	tests := map[string]struct {
@@ -130,6 +201,61 @@ func TestService_getPayload(t *testing.T) {
 		})
 	}
 }
+func TestBlockCancellation(t *testing.T) {
+	s := &Service{
+		logger:             zap.NewNop(),
+		bids:               syncmap.NewStringMapOf[[]*Bid](),
+		builderBidsForSlot: cache.New(builderBidsCleanupInterval, builderBidsCleanupInterval),
+	}
+
+	// test no bids found (cache key not found)
+	result, err := s.GetTopBuilderBid("unknown")
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "no builder bids found")
+
+	// set up bids map for cache key
+	cacheKey := s.keyForCachingBids(testSlot1, testParentHash, testProposerPubkey)
+	bidsMap := syncmap.NewStringMapOf[*Bid]()
+	s.builderBidsForSlot.Set(cacheKey, bidsMap, cache.DefaultExpiration)
+
+	// test no bids found (cache key found but bids map empty)
+	result, err = s.GetTopBuilderBid(cacheKey)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "no builder bids found")
+
+	// add low value bid
+	//lowBlock, _, _ := newTestBlockSubmission(t, testSlot1, 100, testBlockHash1, testValueLow)
+	lowBid := &Bid{
+		Value:         new(big.Int).SetInt64(testValueLow).Bytes(),
+		Payload:       []byte(`lowBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash1[:]),
+		BuilderPubkey: testBuilderPubkey1,
+	}
+	bidsMap.Store(testBuilderPubkey1, lowBid)
+
+	// add high value bid
+	highBid := &Bid{
+		Value:         new(big.Int).SetInt64(testValueHigh).Bytes(),
+		Payload:       []byte(`highBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash2[:]),
+		BuilderPubkey: testBuilderPubkey2,
+	}
+	bidsMap.Store(testBuilderPubkey2, highBid)
+
+	// add medium value bid
+	mediumBid := &Bid{
+		Value:         new(big.Int).SetInt64(testValueHigh).Bytes(),
+		Payload:       []byte(`mediumBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash3[:]),
+		BuilderPubkey: testBuilderPubkey3,
+	}
+	bidsMap.Store(testBuilderPubkey3, mediumBid)
+
+	// test expected high bid found
+	result, err = s.GetTopBuilderBid(cacheKey)
+	assert.Nil(t, err)
+	assert.Equal(t, *highBid, *result)
+}
 
 func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -169,7 +295,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	defer conn.Close()
 	relayClient := relaygrpc.NewRelayClient(conn)
 	c := &Client{lis.Addr().String(), "", conn, relayClient}
-	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "4nDpR2sVxYz1BtU6wFqGhJkLp3Tm5ZoX", 0, fluent, c)
+	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "4nDpR2sVxYz1BtU6wFqGhJkLp3Tm5ZoX", 1606824023, fluent, c)
 
 	go func() {
 		if _, err := service.StreamHeader(ctx, c); err != nil {
@@ -221,10 +347,10 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 			responsePayload := new(spec.VersionedSignedBuilderBid)
 			code, err := sendHTTPRequest(context.Background(), client, http.MethodGet, fmt.Sprintf("http://127.0.0.1:9090/eth/v1/builder/header/%v/%v/%v", tt.in.Slot, tt.in.ParentHash, tt.in.ProposerPubKey), "", map[string]string{}, nil, responsePayload)
 			if !tt.wantErr {
-				assert.NilError(t, err)
+				assert.Nil(t, err)
 				assert.Equal(t, code, http.StatusOK)
 				hash, err := responsePayload.BlockHash()
-				assert.NilError(t, err)
+				assert.Nil(t, err)
 				assert.Equal(t, hash.String(), "0xf4488a3b1fa59a3ce2e52a087ae3d7c93ff4a29f0a2df93a003b02902571cc54")
 			}
 		})
@@ -233,6 +359,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 
 type UserAgent string
 
+//lint:ignore U1000 Ignore unused variable
 func sendHTTPRequest(ctx context.Context, client http.Client, method, url string, userAgent UserAgent, headers map[string]string, payload, dst any) (code int, err error) {
 	var req *http.Request
 
@@ -245,7 +372,7 @@ func sendHTTPRequest(ctx context.Context, client http.Client, method, url string
 		}
 		req, err = http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payloadBytes))
 
-		// Set headers
+		// Set header
 		req.Header.Add("Content-Type", "application/json")
 	}
 	if err != nil {
@@ -292,7 +419,37 @@ func sendHTTPRequest(ctx context.Context, client http.Client, method, url string
 
 	return resp.StatusCode, nil
 }
+func TestGetBuilderBidForSlot(t *testing.T) {
+	svc := &Service{
+		logger:             zap.NewNop(),
+		builderBidsForSlot: cache.New(5*time.Minute, 10*time.Minute),
+	}
+	bid1 := &Bid{}
+	bid2 := &Bid{}
+	// set up builder bids map for test slot
+	cacheKey := svc.keyForCachingBids(testSlot1, testParentHash, testProposerPubkey)
+	builderBidsMap := syncmap.NewStringMapOf[*Bid]()
+	builderBidsMap.Store(testBuilderPubkey1, bid1)
+	svc.builderBidsForSlot.Set(cacheKey, builderBidsMap, cache.DefaultExpiration)
 
+	// test builder bid found
+	bid, found := svc.getBuilderBidForSlot(cacheKey, testBuilderPubkey1)
+	assert.Equal(t, bid, bid2)
+	assert.True(t, found)
+
+	// test builder bid not found (unknown builder pubkey)
+	bid, found = svc.getBuilderBidForSlot(cacheKey, "unknown")
+	assert.Nil(t, bid)
+	assert.False(t, found)
+
+	// test builder bid not found (unknown cache key)
+	cacheKey = svc.keyForCachingBids(testSlot1, testParentHash, "unknown")
+	bid, found = svc.getBuilderBidForSlot(cacheKey, testBuilderPubkey1)
+	assert.Nil(t, bid)
+	assert.False(t, found)
+}
+
+//lint:ignore U1000 Ignore unused variable
 type mockRelayServer struct {
 	relaygrpc.UnimplementedRelayServer
 	output []stream
@@ -316,7 +473,7 @@ func (m *mockRelayServer) GetPayload(ctx context.Context, request *relaygrpc.Get
 }
 
 func (m *mockRelayServer) StreamHeader(request *relaygrpc.StreamHeaderRequest, srv relaygrpc.Relay_StreamHeaderServer) error {
-	// Simulate streaming of headers for testing.
+	// Simulate streaming of header for testing.
 	// send predefined headers to the client via srv.Send().
 	bidStream := make(chan stream, 100)
 	go func() {
@@ -344,6 +501,7 @@ func (m *mockRelayServer) StreamHeader(request *relaygrpc.StreamHeaderRequest, s
 	return nil
 }
 
+//lint:ignore U1000 Ignore unused variable
 type stream struct {
 	Slot           uint64
 	ParentHash     string
@@ -351,6 +509,7 @@ type stream struct {
 	Value          []byte
 	Payload        []byte
 	BlockHash      string
+	BuilderPubKey  string
 }
 
 type mockRelayClient struct {

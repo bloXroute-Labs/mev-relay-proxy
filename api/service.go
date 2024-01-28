@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/patrickmn/go-cache"
 	"io"
 	"math/big"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,29 +34,38 @@ import (
 )
 
 const (
-	connReconnectTimeout = 5 * time.Second
-	requestTimeout       = 3 * time.Second
-	stateCheckerInterval = 5 * time.Second
+	requestTimeout = 3 * time.Second
+	// cache
+	builderBidsCleanupInterval = 60 * time.Second // 5 slots
+	cacheKeySeparator          = "_"
+)
+
+var (
+
+	// errors
+	errInvalidSlot   = errors.New("invalid slot")
+	errInvalidPubkey = errors.New("invalid pubkey")
+	errInvalidHash   = errors.New("invalid hash")
 )
 
 type IService interface {
 	RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, any, error)
 	GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, any, error)
 	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string, authHeader string) (any, any, error)
+	NodeID() string
 }
 type Service struct {
-	logger            *zap.Logger
-	version           string // build version
-	headers           *syncmap.SyncMap[string, []*Header]
-	clients           []*Client
-	nodeID            string // UUID
-	authKey           string
-	secretToken       string
-	beaconGenesisTime int64
-	isStreamOpen      bool
-	tracer            trace.Tracer
-	fluentD           fluentstats.Stats
-	expiredSlotKeyCh  chan string
+	logger             *zap.Logger
+	version            string // build version
+	bids               *syncmap.SyncMap[string, []*Bid]
+	clients            []*Client
+	nodeID             string // UUID
+	authKey            string
+	secretToken        string
+	tracer             trace.Tracer
+	fluentD            fluentstats.Stats
+	builderBidsForSlot *cache.Cache
+	beaconGenesisTime  int64
 }
 
 type Client struct {
@@ -64,25 +75,27 @@ type Client struct {
 	relaygrpc.RelayClient
 }
 
-type Header struct {
-	Value     []byte // block value
-	Payload   []byte // blinded block
-	BlockHash string
+type Bid struct {
+	Value            []byte // block value
+	Payload          []byte // blinded block
+	BlockHash        string
+	BuilderPubkey    string
+	BuilderExtraData string
 }
 
 func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, beaconGenesisTime int64, fluentD fluentstats.Stats, clients ...*Client) *Service {
 	return &Service{
-		logger:            logger,
-		version:           version,
-		clients:           clients,
-		headers:           syncmap.NewStringMapOf[[]*Header](),
-		nodeID:            nodeID,
-		authKey:           authKey,
-		secretToken:       secretToken,
-		beaconGenesisTime: beaconGenesisTime,
-		tracer:            tracer,
-		fluentD:           fluentD,
-		expiredSlotKeyCh:  make(chan string, 100),
+		logger:             logger,
+		version:            version,
+		clients:            clients,
+		bids:               syncmap.NewStringMapOf[[]*Bid](),
+		nodeID:             nodeID,
+		authKey:            authKey,
+		secretToken:        secretToken,
+		tracer:             tracer,
+		fluentD:            fluentD,
+		builderBidsForSlot: cache.New(builderBidsCleanupInterval, builderBidsCleanupInterval),
+		beaconGenesisTime:  beaconGenesisTime,
 	}
 }
 
@@ -179,10 +192,6 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 
 func (s *Service) StartStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
 
-	// Periodically clean up headers
-	go s.cleanUpExpiredHeaders(s.expiredSlotKeyCh)
-	defer close(s.expiredSlotKeyCh)
-
 	for _, client := range s.clients {
 		wg.Add(1)
 		go func(_ctx context.Context, c *Client) {
@@ -266,7 +275,6 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		span.SetStatus(otelcodes.Error, err.Error())
 		return nil, err
 	}
-	s.isStreamOpen = true
 	done := make(chan struct{})
 	var once sync.Once
 	closeDone := func() {
@@ -341,7 +349,6 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 				zap.String("tracer_id", parentSpan.SpanContext().TraceID().String()),
 			)
 			// mark as canceled to stop the upstream retry loop
-			s.isStreamOpen = false
 			span.SetStatus(otelcodes.Error, "received cancellation signal")
 			closeDone()
 			break
@@ -356,8 +363,8 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 				zap.String("url", client.URL),
 				zap.String("tracer_id", parentSpan.SpanContext().TraceID().String()),
 			)
-			s.isStreamOpen = false
 			span.SetStatus(otelcodes.Error, "server unavailable,try reconnecting")
+			s.logger.Warn("server unavailable,try reconnecting", zap.Error(_s.Err()), zap.String("nodeID", client.nodeID), zap.String("code", _s.Code().String()), zap.String("reqID", id), zap.String("url", client.URL))
 			closeDone()
 			break
 		}
@@ -384,37 +391,32 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			)
 			continue
 		}
-		k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", header.GetSlot(), header.GetParentHash(), header.GetPubkey())
+
+		k := s.keyForCachingBids(header.GetSlot(), header.GetParentHash(), header.GetPubkey())
 		s.logger.Info("received header",
-			zap.String("req_id", id),
+			zap.String("reqID", id),
+			zap.String("keyForCachingBids", k),
 			zap.Uint64("slot", header.GetSlot()),
-			zap.String("parent_hash", header.GetParentHash()),
-			zap.String("block_hash", header.GetBlockHash()),
-			zap.String("block_value", new(big.Int).SetBytes(header.GetValue()).String()),
-			zap.String("pub_key", header.GetPubkey()),
-			zap.String("node_id", client.nodeID),
+			zap.String("parentHash", header.GetParentHash()),
+			zap.String("blockHash", header.GetBlockHash()),
+			zap.String("blockValue", new(big.Int).SetBytes(header.GetValue()).String()),
+			zap.String("pubKey", header.GetPubkey()),
+			zap.String("builderPubkey", header.GetBuilderPubkey()),
+			zap.String("extraData", header.GetBuilderExtraData()),
+			zap.String("nodeID", client.nodeID),
 			zap.String("url", client.URL),
 			zap.String("tracer_id", parentSpan.SpanContext().TraceID().String()),
 		)
-		v := &Header{
-			Value:     header.GetValue(),
-			Payload:   header.GetPayload(),
-			BlockHash: header.GetBlockHash(),
-		}
-		if h, ok := s.headers.Load(k); ok {
-			h = append(h, v)
-			s.headers.Store(k, h)
-			continue
-		}
-		h := make([]*Header, 0)
-		h = append(h, v)
-		s.headers.Store(k, h)
 
-		// Send the key to chan for expiration after 1 minute to clean-up
-		go func(key string) {
-			<-time.After(time.Minute)
-			s.expiredSlotKeyCh <- key
-		}(k)
+		// store the bid for builder pubkey
+		bid := &Bid{
+			Value:            header.GetValue(),
+			Payload:          header.GetPayload(),
+			BlockHash:        header.GetBlockHash(),
+			BuilderPubkey:    header.GetBuilderPubkey(),
+			BuilderExtraData: header.GetBuilderExtraData(),
+		}
+		s.setBuilderBidForSlot(k, header.GetBuilderPubkey(), bid) // run it in goroutine ?
 	}
 	<-done
 	s.logger.Warn("closing connection",
@@ -425,14 +427,6 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	)
 	return nil, nil
 }
-
-func (s *Service) cleanUpExpiredHeaders(expiredKeyCh <-chan string) {
-	for k := range expiredKeyCh {
-		s.logger.Info("cleanup old slot", zap.String("key", k))
-		s.headers.Delete(k)
-	}
-}
-
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, any, error) {
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
@@ -452,7 +446,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 	_slot, err := strconv.ParseUint(slot, 10, 64)
 	if err != nil {
-		return nil, nil, toErrorResp(http.StatusBadRequest, "", fmt.Sprintf("invalid slot %v", slot), id, "invalid slot", clientIP)
+		return nil, nil, toErrorResp(http.StatusBadRequest, "", fmt.Sprintf("invalid slot %v", slot), id, errInvalidSlot.Error(), clientIP)
 
 	}
 
@@ -484,68 +478,77 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		attribute.String("account_id", accountID),
 		attribute.String("auth_header", authHeader),
 	)
-	val := new(big.Int)
-	index := 0
-	//TODO: currently storing all the header values for the particular slot
-	// can be stored only the higher values to avoid looping through all the values
-	if headers, ok := s.headers.Load(k); ok {
-		_, spanStoringHeader := s.tracer.Start(ctx, "storingHeader")
-		for i, header := range headers {
-			hVal := new(big.Int).SetBytes(header.Value)
-			if hVal.Cmp(val) == 1 {
-				val.Set(hVal)
-				index = i
-			}
-		}
-		out := headers[index]
-		go func() {
-			s.fluentD.LogToFluentD(fluentstats.Record{
-				Type: "relay_proxy_provided_header",
-				Data: map[string]interface{}{
-					"received":      receivedAt,
-					"duration":      time.Since(startTime),
-					"slot":          slot,
-					"slotStartTime": slotStartTime,
-					"msIntoSlot":    msIntoSlot,
-					"parentHash":    parentHash,
-					"pubKey":        pubKey,
-					"blockHash":     out.BlockHash,
-					"reqID":         id,
-					"clientIP":      clientIP,
-					"blockValue":    val.String(),
-					"succeeded":     true,
-					"nodeID":        s.nodeID,
-					"accountID":     accountID,
-				},
-			}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
-		}()
-		spanStoringHeader.AddEvent("Header value is present", trace.WithAttributes(attribute.String("blockHash", out.BlockHash), attribute.String("blockValue", val.String())))
-		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
+
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span = s.tracer.Start(parentSpanCtx, "getHeader")
+	defer span.End()
+
+	_, spanStoringHeader := s.tracer.Start(parentSpanCtx, "storingHeader")
+
+	//TODO: send fluentd stats for StatusNoContent error cases
+
+	if len(pubKey) != 98 {
+		return nil, k, toErrorResp(http.StatusNoContent, "", errInvalidPubkey.Error(), id, fmt.Sprintf("pub key should be %d long", 98), clientIP)
 	}
-	msg := fmt.Sprintf("header value is not present for the requested key %v", k)
-	span.AddEvent("Header value is not present", trace.WithAttributes(attribute.String("msg", msg)))
+
+	if len(parentHash) != 66 {
+		return nil, k, toErrorResp(http.StatusNoContent, "", errInvalidHash.Error(), id, fmt.Sprintf("parent hash hex should be %d long", 66), clientIP)
+	}
+
+	fetchGetHeaderStartTime := time.Now().UTC()
+	keyForCachingBids := s.keyForCachingBids(_slot, parentHash, pubKey)
+	slotBestHeader, err := s.GetTopBuilderBid(keyForCachingBids)
+	fetchGetHeaderDurationMS := time.Since(fetchGetHeaderStartTime).Milliseconds()
+	if slotBestHeader == nil || err != nil {
+		msg := fmt.Sprintf("header value is not present for the requested key %v", keyForCachingBids)
+		span.AddEvent("Header value is not present", trace.WithAttributes(attribute.String("msg", msg)))
+		go func() {
+			headerStats := getHeaderStatsRecord{
+				RequestReceivedAt:        receivedAt,
+				FetchGetHeaderStartTime:  fetchGetHeaderStartTime.String(),
+				FetchGetHeaderDurationMS: fetchGetHeaderDurationMS,
+				Duration:                 time.Since(startTime),
+				MsIntoSlot:               msIntoSlot,
+				ParentHash:               parentHash,
+				PubKey:                   pubKey,
+				BlockHash:                "",
+				ReqID:                    id,
+				ClientIP:                 clientIP,
+				BlockValue:               "",
+				Succeeded:                false,
+				NodeID:                   s.nodeID,
+			}
+			s.fluentD.LogToFluentD(fluentstats.Record{
+				Type: typeRelayProxyGetHeader,
+				Data: headerStats,
+			}, time.Now().UTC(), s.NodeID(), statsRelayProxyGetHeader)
+		}()
+		return nil, k, toErrorResp(http.StatusNoContent, "", msg, id, msg, clientIP)
+	}
+	spanStoringHeader.End()
 	go func() {
+		headerStats := getHeaderStatsRecord{
+			RequestReceivedAt:        receivedAt,
+			FetchGetHeaderStartTime:  fetchGetHeaderStartTime.String(),
+			FetchGetHeaderDurationMS: fetchGetHeaderDurationMS,
+			Duration:                 time.Since(startTime),
+			MsIntoSlot:               msIntoSlot,
+			ParentHash:               parentHash,
+			PubKey:                   pubKey,
+			BlockHash:                slotBestHeader.BlockHash,
+			ReqID:                    id,
+			ClientIP:                 clientIP,
+			BlockValue:               new(big.Int).SetBytes(slotBestHeader.Value).String(),
+			Succeeded:                false,
+			NodeID:                   s.nodeID,
+		}
 		s.fluentD.LogToFluentD(fluentstats.Record{
-			Type: "relay_proxy_provided_header",
-			Data: map[string]interface{}{
-				"RequestReceivedAt": receivedAt,
-				"duration":          time.Since(startTime),
-				"slot":              slot,
-				"slotStartTime":     slotStartTime,
-				"msIntoSlot":        msIntoSlot,
-				"parentHash":        parentHash,
-				"pubKey":            pubKey,
-				"blockHash":         "",
-				"reqID":             id,
-				"clientIP":          clientIP,
-				"blockValue":        "",
-				"succeeded":         false,
-				"nodeID":            s.nodeID,
-				"accountID":         accountID,
-			},
-		}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
+			Type: typeRelayProxyGetHeader,
+			Data: headerStats,
+		}, time.Now().UTC(), s.NodeID(), statsRelayProxyGetHeader)
 	}()
-	return nil, k, toErrorResp(http.StatusNoContent, "", "", id, msg, clientIP)
+
+	return json.RawMessage(slotBestHeader.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, slotBestHeader.BlockHash, string(slotBestHeader.Value)), nil
 }
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, any, error) {
@@ -660,24 +663,24 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 					}
 				}
 
+				payloadStat := getPayloadStatsRecord{
+					RequestReceivedAt: receivedAt,
+					Duration:          time.Since(startTime),
+					SlotStartTime:     slotStartTime,
+					MsIntoSlot:        msIntoSlot,
+					Slot:              uint64(slot),
+					ParentHash:        "",
+					PubKey:            "",
+					BlockHash:         blockHash,
+					ReqID:             id,
+					ClientIP:          clientIP,
+					Succeeded:         false,
+					NodeID:            s.nodeID,
+				}
 				s.fluentD.LogToFluentD(fluentstats.Record{
-					Type: "relay_proxy_provided_payload",
-					Data: map[string]interface{}{
-						"RequestReceivedAt": receivedAt,
-						"duration":          time.Since(startTime),
-						"slotStartTime":     slotStartTime,
-						"msIntoSlot":        msIntoSlot,
-						"slot":              slot,
-						"parentHash":        "",
-						"pubKey":            "",
-						"blockHash":         blockHash,
-						"reqID":             id,
-						"clientIP":          clientIP,
-						"succeeded":         false,
-						"nodeID":            s.nodeID,
-						"accountID":         accountID,
-					},
-				}, time.Now().UTC(), s.nodeID, "relay-proxy-getPayload")
+					Type: typeRelayProxyGetPayload,
+					Data: payloadStat,
+				}, time.Now().UTC(), s.NodeID(), statsRelayProxyGetPayload)
 			}()
 			return nil, meta, toErrorResp(http.StatusInternalServerError, "", "failed to getPayload", id, ctx.Err().Error(), clientIP)
 		case _err = <-errChan:
@@ -688,29 +691,145 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 				slotStartTime := GetSlotStartTime(s.beaconGenesisTime, int64(out.GetSlot()))
 				msIntoSlot := time.Since(slotStartTime).Milliseconds()
 
+				payloadStats := getPayloadStatsRecord{
+					RequestReceivedAt: receivedAt,
+					Duration:          time.Since(startTime),
+					SlotStartTime:     slotStartTime,
+					MsIntoSlot:        msIntoSlot,
+					Slot:              out.GetSlot(),
+					ParentHash:        out.GetParentHash(),
+					PubKey:            out.GetPubkey(),
+					BlockHash:         out.GetBlockHash(),
+					ReqID:             id,
+					ClientIP:          clientIP,
+					Succeeded:         false,
+					NodeID:            s.nodeID,
+				}
 				s.fluentD.LogToFluentD(fluentstats.Record{
-					Type: "relay_proxy_provided_payload",
-					Data: map[string]interface{}{
-						"RequestReceivedAt": receivedAt,
-						"duration":          time.Since(startTime),
-						"slot":              out.GetSlot(),
-						"slotStartTime":     slotStartTime,
-						"msIntoSlot":        msIntoSlot,
-						"parentHash":        out.GetParentHash(),
-						"pubKey":            out.GetPubkey(),
-						"blockHash":         out.GetBlockHash(),
-						"reqID":             id,
-						"clientIP":          clientIP,
-						"succeeded":         true,
-						"nodeID":            s.nodeID,
-						"accountID":         accountID,
-					},
-				}, time.Now().UTC(), s.nodeID, "relay-proxy-getPayload")
+					Type: typeRelayProxyGetPayload,
+					Data: payloadStats,
+				}, time.Now().UTC(), s.NodeID(), statsRelayProxyGetPayload)
 			}()
 			return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
 		}
 	}
 	return nil, meta, _err
+}
+
+func (s *Service) keyForCachingBids(slot uint64, parentHash string, proposerPubkey string) string {
+	return fmt.Sprintf("%d_%s_%s", slot, strings.ToLower(parentHash), strings.ToLower(proposerPubkey))
+}
+
+func (s *Service) parseKeyForCachingBids(cacheKey string) (slot uint64, parentHash string, proposerPubkey string, err error) {
+	cacheKeyComponents := strings.Split(cacheKey, cacheKeySeparator)
+	if len(cacheKeyComponents) != 3 {
+		err = errors.New("invalid cache key format")
+		return
+	}
+
+	slot, parseError := strconv.ParseUint(cacheKeyComponents[0], 10, 64)
+	if parseError != nil {
+		err = parseError
+		return
+	}
+
+	parentHash = cacheKeyComponents[1]
+	proposerPubkey = cacheKeyComponents[2]
+
+	return
+}
+
+func (s *Service) GetTopBuilderBid(cacheKey string) (*Bid, error) {
+	var builderBidsMap *syncmap.SyncMap[string, *Bid]
+	entry, bidsMapFound := s.builderBidsForSlot.Get(cacheKey)
+	if bidsMapFound {
+		builderBidsMap = entry.(*syncmap.SyncMap[string, *Bid])
+	}
+
+	if !bidsMapFound || builderBidsMap.Size() == 0 {
+		return nil, fmt.Errorf("no builder bids found for cache key %s", cacheKey)
+	}
+
+	topBid := new(Bid)
+	topBidValue := new(big.Int)
+
+	// search for the highest builder bid
+	builderBidsMap.Range(func(builderPubkey string, bid *Bid) bool {
+		bidValue := new(big.Int).SetBytes(bid.Value)
+		if bidValue.Cmp(topBidValue) > 0 {
+			topBid = bid
+			topBidValue.Set(bidValue)
+		}
+		return true
+	})
+
+	return topBid, nil
+}
+
+func (s *Service) setBuilderBidForSlot(cacheKey string, builderPubkey string, bid *Bid) {
+	var builderBidsMap *syncmap.SyncMap[string, *Bid]
+
+	// if the cache key does not exist, create a new syncmap and store it in the cache
+	if entry, bidsMapFound := s.builderBidsForSlot.Get(cacheKey); !bidsMapFound {
+		builderBidsMap = syncmap.NewStringMapOf[*Bid]()
+		s.builderBidsForSlot.Set(cacheKey, builderBidsMap, cache.DefaultExpiration)
+	} else {
+		// otherwise use the existing syncmap
+		builderBidsMap = entry.(*syncmap.SyncMap[string, *Bid])
+	}
+
+	if existingBuilderBid, found := builderBidsMap.Load(builderPubkey); found {
+
+		oldBidValue := new(big.Int).SetBytes(existingBuilderBid.Value)
+		newBidValue := new(big.Int).SetBytes(bid.Value)
+		slot, parentHash, proposerPubkey, err := s.parseKeyForCachingBids(cacheKey)
+		if err != nil {
+			s.logger.With(
+				zap.String("cacheKey", cacheKey),
+				zap.String("builderPubkey", builderPubkey),
+				zap.Error(err),
+			).Error("could not parse cache key")
+		}
+
+		// if this block is canceling another higher-value block from the same builder,
+		// log getHeader cancellation data to fluentd to be loaded into the generic table
+		if newBidValue.Cmp(oldBidValue) < 0 {
+			go func() {
+				stat := blockReplacedStatsRecord{
+					Slot:                   slot,
+					ParentHash:             parentHash,
+					ProposerPubkey:         proposerPubkey,
+					BuilderPubkey:          builderPubkey,
+					ReplacedBlockHash:      existingBuilderBid.BlockHash,
+					ReplacedBlockValue:     oldBidValue.String(),
+					ReplacedBlockETHValue:  WeiToEth(oldBidValue.String()),
+					ReplacedBlockExtraData: existingBuilderBid.BuilderExtraData,
+					NewBlockHash:           bid.BlockHash,
+					NewBlockValue:          newBidValue.String(),
+					NewBlockEthValue:       WeiToEth(newBidValue.String()),
+					NewBlockExtraData:      bid.BuilderExtraData,
+					ReplacementTime:        time.Now().UTC(),
+				}
+				// log the cancellation data
+				s.logger.Info("logging block replacement data", zap.Any("stat", stat))
+				s.fluentD.LogToFluentD(fluentstats.Record{
+					Data: stat,
+					Type: "relay-proxy-bid-cancellation",
+				}, time.Now(), s.NodeID(), statsRelayProxyBidCancellation)
+			}()
+		}
+	}
+	builderBidsMap.Store(builderPubkey, bid)
+}
+
+// This is only used for testing
+func (s *Service) getBuilderBidForSlot(cacheKey string, builderPubkey string) (*Bid, bool) {
+	if entry, bidsMapFound := s.builderBidsForSlot.Get(cacheKey); bidsMapFound {
+		builderBidsMap := entry.(*syncmap.SyncMap[string, *Bid])
+		builderBid, found := builderBidsMap.Load(builderPubkey)
+		return builderBid, found
+	}
+	return nil, false
 }
 
 type ErrorResp struct {
@@ -744,4 +863,8 @@ func toErrorResp(code int, relayMsg, proxyMsg, reqID, msg, clientIP string) *Err
 			clientIP: clientIP,
 		},
 	}
+}
+
+func (s *Service) NodeID() string {
+	return s.nodeID
 }
