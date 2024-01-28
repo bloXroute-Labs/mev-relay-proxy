@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
 	"go.uber.org/zap"
 )
 

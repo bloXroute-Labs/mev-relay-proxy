@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/bloXroute-Labs/mev-relay-proxy/api"
 	"os"
 	"os/signal"
 	"strings"
@@ -13,7 +14,6 @@ import (
 	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 
-	"github.com/bloXroute-Labs/mev-relay-proxy/api"
 	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	"github.com/google/uuid"
 
