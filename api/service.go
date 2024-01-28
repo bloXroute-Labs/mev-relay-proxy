@@ -33,6 +33,7 @@ type IService interface {
 	RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, any, error)
 	GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error)
 	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error)
+	NodeID() string
 }
 type Service struct {
 	logger  *zap.Logger
@@ -394,4 +395,8 @@ func toErrorResp(code int, relayMsg, proxyMsg, reqID, msg, clientIP string) *Err
 			clientIP: clientIP,
 		},
 	}
+}
+
+func (s *Service) NodeID() string {
+	return s.nodeID
 }

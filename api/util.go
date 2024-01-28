@@ -1,10 +1,18 @@
 package api
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"strings"
+
+	"github.com/ethereum/go-ethereum/common/hexutil"
+)
+
+const (
+	weiToEthSignificantDigits = 18
 )
 
 // decodeJSON reads JSON from io.Reader and decodes it into a struct
@@ -38,4 +46,22 @@ func GetIPXForwardedFor(r *http.Request) string {
 		return forwarded
 	}
 	return r.RemoteAddr
+}
+func WeiToEth(valueString string) string {
+	numDigits := len(valueString)
+	missing := int(math.Max(0, float64((weiToEthSignificantDigits+1)-numDigits)))
+	prefix := "0000000000000000000"[:missing]
+	ethValue := prefix + valueString
+	decimalIndex := len(ethValue) - weiToEthSignificantDigits
+	return ethValue[:decimalIndex] + "." + ethValue[decimalIndex:]
+}
+
+// DecodeExtraData returns a decoded string from block ExtraData
+func DecodeExtraData(extraData []byte) string {
+	extraDataString := hexutil.Bytes(extraData).String()
+	decodedExtraData, err := hex.DecodeString(strings.TrimPrefix(extraDataString, "0x"))
+	if err != nil {
+		return ""
+	}
+	return string(decodedExtraData)
 }
