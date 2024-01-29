@@ -111,7 +111,6 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		go func(c *Client) {
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
-			s.logger.Info("sending request to relay", zap.String("Secret Token", s.secretToken))
 			req := &relaygrpc.RegisterValidatorRequest{
 				ReqId:       id,
 				Payload:     payload,
@@ -436,7 +435,6 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	_, span := s.tracer.Start(parentSpanCtx, "getPayload")
 	defer span.End()
 
-	s.logger.Info("sending request to relay", zap.String("Secret Token", s.secretToken))
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:       id,
 		Payload:     payload,
