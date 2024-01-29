@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/attestantio/go-builder-client v0.4.2
 	github.com/bloXroute-Labs/gateway/v2 v2.127.75-0.20231129102830-ab252898d3c3
-	github.com/bloXroute-Labs/relay-grpc v0.0.15-0.20240126175648-cd9c625795ab
+	github.com/bloXroute-Labs/relay-grpc v0.0.15-0.20240129164955-19670307774f
 	github.com/ethereum/go-ethereum v1.13.1
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/go-chi/chi v1.5.5
