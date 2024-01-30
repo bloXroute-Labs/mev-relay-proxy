@@ -10,8 +10,8 @@ github.com/bits-and-blooms/bitset v1.10.0 h1:ePXTeiPEazB5+opbv5fr8umg2R/1NlzgDsy
 github.com/bits-and-blooms/bitset v1.10.0/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
 github.com/bloXroute-Labs/gateway/v2 v2.127.75-0.20231129102830-ab252898d3c3 h1:rpGIMsomzwXBzp8eo5MGap1tbRGv+vnlW/of1DA2kjM=
 github.com/bloXroute-Labs/gateway/v2 v2.127.75-0.20231129102830-ab252898d3c3/go.mod h1:ibAkLLqNLpPgwBnoBwzPaXiId8HUnRb+pExQcRmV8Bg=
-github.com/bloXroute-Labs/relay-grpc v0.0.14-0.20240124004426-01813a6823bf h1:A7Gu1BlMgprGawZ5rOKJmR/mW0/8fRYOBbQGQCn/gxU=
-github.com/bloXroute-Labs/relay-grpc v0.0.14-0.20240124004426-01813a6823bf/go.mod h1:8ww7t8p75wC5wqdQ/T2S6qGCB2ZKgSPsmWKto7AdlhA=
+github.com/bloXroute-Labs/relay-grpc v0.0.15-0.20240129164955-19670307774f h1:+H+EnfEPbA4dZnhCGS2LGzhM6/S/FmHYoCUO5i39FO0=
+github.com/bloXroute-Labs/relay-grpc v0.0.15-0.20240129164955-19670307774f/go.mod h1:8ww7t8p75wC5wqdQ/T2S6qGCB2ZKgSPsmWKto7AdlhA=
 github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869 h1:DDGfHa7BWjL4YnC6+E63dPcxHo2sUxDIu8g3QgEJdRY=
 github.com/btcsuite/btcd/btcec/v2 v2.3.2 h1:5n0X6hX0Zk+6omWcihdYvdAlGf2DfasC0GMf7DClJ3U=
 github.com/btcsuite/btcd/btcec/v2 v2.3.2/go.mod h1:zYzJ8etWJQIv1Ogk7OzpWjowwOdXY1W/17j2MW85J04=
