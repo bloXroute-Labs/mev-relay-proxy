@@ -50,6 +50,10 @@ func main() {
 		clients []*api.Client
 		conns   []*grpc.ClientConn
 	)
+	// validate secret token
+	if _SecretToken == "" {
+		l.Fatal("secret token is empty")
+	}
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
 		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())

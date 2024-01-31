@@ -33,7 +33,7 @@ lint:
 
 .PHONY: build-for-docker
 build-for-docker:
-	GOOS=linux go build -ldflags "-X main._BuildVersion=${VERSION}"  -v -o ${REPO} ${MAIN_FILE}
+	GOOS=linux go build -ldflags "-X main._BuildVersion=${VERSION} -X main._SecretToken=${SECRET_TOKEN}" -v -o ${REPO} ${MAIN_FILE}
 
 .PHONY: docker-image
 docker-image:
