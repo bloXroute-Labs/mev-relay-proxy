@@ -26,6 +26,8 @@ var (
 	// Included in the build process
 	_BuildVersion string
 	_AppName      = "mev-relay-proxy"
+	_SecretToken  string
+
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
 
@@ -48,6 +50,10 @@ func main() {
 		clients []*api.Client
 		conns   []*grpc.ClientConn
 	)
+	// validate secret token
+	if _SecretToken == "" {
+		l.Fatal("secret token is empty")
+	}
 	urls := strings.Split(*relaysGRPCURL, ",")
 	for _, url := range urls {
 		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
@@ -63,7 +69,7 @@ func main() {
 		}
 	}()
 	// init service and server
-	svc := api.NewService(l, _BuildVersion, *nodeID, *authKey, clients...)
+	svc := api.NewService(l, _BuildVersion, _SecretToken, *nodeID, *authKey, clients...)
 	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS)
 
 	exit := make(chan struct{})

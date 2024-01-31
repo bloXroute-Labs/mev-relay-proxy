@@ -42,6 +42,7 @@ type Service struct {
 	nodeID  string // UUID
 	//slotCleanUpCh chan uint64
 	authKey      string
+	secretToken  string
 	isStreamOpen bool
 }
 
@@ -58,14 +59,15 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, version string, nodeID string, authKey string, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, version string, secretToken string, nodeID string, authKey string, clients ...*Client) *Service {
 	return &Service{
-		logger:  logger,
-		version: version,
-		clients: clients,
-		headers: syncmap.NewStringMapOf[[]*Header](),
-		nodeID:  nodeID,
-		authKey: authKey,
+		logger:      logger,
+		version:     version,
+		clients:     clients,
+		headers:     syncmap.NewStringMapOf[[]*Header](),
+		nodeID:      nodeID,
+		authKey:     authKey,
+		secretToken: secretToken,
 	}
 }
 
@@ -88,13 +90,14 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
 			req := &relaygrpc.RegisterValidatorRequest{
-				ReqId:      id,
-				Payload:    payload,
-				ClientIp:   clientIP,
-				Version:    s.version,
-				NodeId:     c.nodeID,
-				ReceivedAt: timestamppb.New(receivedAt),
-				AuthHeader: authHeader,
+				ReqId:       id,
+				Payload:     payload,
+				ClientIp:    clientIP,
+				Version:     s.version,
+				NodeId:      c.nodeID,
+				ReceivedAt:  timestamppb.New(receivedAt),
+				AuthHeader:  authHeader,
+				SecretToken: s.secretToken,
 			}
 			out, err := c.RegisterValidator(clientCtx, req)
 			if err != nil {
@@ -158,9 +161,10 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	client.nodeID = fmt.Sprintf("%v-%v-%v-%v", s.nodeID, client.URL, id, time.Now().UTC().Format("15:04:05.999999999"))
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
-		ReqId:   id,
-		NodeId:  client.nodeID,
-		Version: s.version,
+		ReqId:       id,
+		NodeId:      client.nodeID,
+		Version:     s.version,
+		SecretToken: s.secretToken,
 	})
 	s.logger.Info("streaming headers", zap.String("nodeID", client.nodeID), zap.String("url", client.URL))
 	if err != nil {
@@ -315,11 +319,12 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	req := &relaygrpc.GetPayloadRequest{
-		ReqId:      id,
-		Payload:    payload,
-		ClientIp:   clientIP,
-		Version:    s.version,
-		ReceivedAt: timestamppb.New(receivedAt),
+		ReqId:       id,
+		Payload:     payload,
+		ClientIp:    clientIP,
+		Version:     s.version,
+		ReceivedAt:  timestamppb.New(receivedAt),
+		SecretToken: s.secretToken,
 	}
 	var (
 		errChan  = make(chan error, len(s.clients))

@@ -2,6 +2,8 @@ VERSION := $(shell git describe --tags --always)
 REPO := mev-relay-proxy
 DOCKER_REPO :=bloxroute/${REPO}
 MAIN_FILE := ./cmd/mev-relay-proxy
+SECRET_TOKEN = "" #Add your secret token here
+
 .PHONY: all
 all: build
 
@@ -14,7 +16,7 @@ fmt:
 
 .PHONY: build
 build:
-	go build -ldflags "-X main._BuildVersion=${VERSION}" -v -o ${REPO} ${MAIN_FILE}
+	go build -ldflags "-X main._BuildVersion=${VERSION} -X main._SecretToken=${SECRET_TOKEN}" -v -o ${REPO} ${MAIN_FILE}
 
 .PHONY: test
 test:
@@ -31,7 +33,7 @@ lint:
 
 .PHONY: build-for-docker
 build-for-docker:
-	GOOS=linux go build -ldflags "-X main._BuildVersion=${VERSION}"  -v -o ${REPO} ${MAIN_FILE}
+	GOOS=linux go build -ldflags "-X main._BuildVersion=${VERSION} -X main._SecretToken=${SECRET_TOKEN}" -v -o ${REPO} ${MAIN_FILE}
 
 .PHONY: docker-image
 docker-image:
