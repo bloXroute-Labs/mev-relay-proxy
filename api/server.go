@@ -128,7 +128,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	_, span := s.tracer.Start(parentSpanCtx, "HandleRegistration")
 
 	if err != nil {
-		respondError(registration, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "could not read registration", ""), s.logger, nil, s.tracer)
+		respondError(registration, w, toErrorResp(http.StatusInternalServerError, "", err.Error(), "", "could not read registration", ""), s.logger, nil, s.tracer)
 		return
 	}
 
@@ -181,14 +181,13 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Duration(sleep) * time.Millisecond)
 	}
 
+	<-time.After(time.Millisecond * time.Duration(s.getHeaderDelay))
 	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey)
 	if err != nil {
 		respondError(getHeader, w, err, s.logger, metaData, s.tracer)
 		return
 	}
-
 	defer span.End()
-
 	respondOK(getHeader, w, out, s.logger, metaData, s.tracer)
 }
 
@@ -211,7 +210,7 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, err.Error(), "", "could not read getPayload", ""), s.logger, nil, s.tracer)
+		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, "", err.Error(), "", "could not read getPayload", ""), s.logger, nil, s.tracer)
 		return
 	}
 	out, metaData, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP)

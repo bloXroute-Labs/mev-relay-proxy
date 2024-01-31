@@ -8,3 +8,4 @@ mev-relay-proxy
 
 # Ignore swp files
 *.swp
+.DS_Store
