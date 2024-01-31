@@ -10,17 +10,25 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bloXroute-Labs/gateway/v2/utils/syncmap"
+	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
+)
+
+const (
+	requestTimeout = 3 * time.Second
 )
 
 type IService interface {
@@ -41,10 +49,16 @@ type Service struct {
 	registrationClients []*Client
 	currentRelayIndex   int
 	relayMutex          sync.Mutex
+	secretToken         string
+	isStreamOpen        bool
+	fluentD             fluentstats.Stats
+	expiredSlotKeyCh    chan string
 }
 
 type Client struct {
-	URL string
+	URL    string
+	nodeID string
+	Conn   *grpc.ClientConn
 	relaygrpc.RelayClient
 }
 
@@ -54,7 +68,7 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID string, authKey string, clients []*Client, registrationClients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, fluentD fluentstats.Stats, clients []*Client, registrationClients ...*Client) *Service {
 	return &Service{
 		logger:              logger,
 		tracer:              tracer,
@@ -65,10 +79,19 @@ func NewService(logger *zap.Logger, tracer trace.Tracer, version string, nodeID 
 		authKey:             authKey,
 		registrationClients: registrationClients,
 		currentRelayIndex:   0,
+		secretToken:         secretToken,
+		fluentD:             fluentD,
+		expiredSlotKeyCh:    make(chan string, 100),
 	}
 }
 
 func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string, authHeader string) (any, any, error) {
+	var (
+		errChan  = make(chan error, len(s.clients))
+		respChan = make(chan *relaygrpc.RegisterValidatorResponse, len(s.clients))
+		_err     error
+	)
+
 	id := uuid.NewString()
 	s.logger.Info("received",
 		zap.String("method", "registerValidator"),
@@ -76,52 +99,90 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.String("reqID", id),
 		zap.Time("receivedAt", receivedAt),
 	)
+
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+
 	parentSpan := trace.SpanFromContext(ctx)
-	req := &relaygrpc.RegisterValidatorRequest{
-		ReqId:      id,
-		Payload:    payload,
-		ClientIp:   clientIP,
-		NodeId:     s.nodeID,
-		Version:    s.version,
-		ReceivedAt: timestamppb.New(receivedAt),
-		AuthHeader: authHeader,
-	}
-	var (
-		err error
-		out *relaygrpc.RegisterValidatorResponse
-	)
 	parentSpan.SetAttributes(
 		attribute.String("method", "registerValidator"),
 		attribute.String("clientIP", clientIP),
 		attribute.String("reqID", id),
 		attribute.Int64("receivedAt", receivedAt.Unix()),
 	)
+
 	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
+	_, span := s.tracer.Start(spanCtx, "registerValidator")
+	defer span.End()
 
-	// run for loop for the length of registrationClients and do round robin
-	regErr := getRegistrationRelay(spanCtx, s, req, out, id, clientIP, err)
+	for _, registrationClient := range s.registrationClients {
+		go func(c *Client) {
+			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+			defer cancel()
 
-	if regErr != nil {
-		// log error
-		s.logger.Warn("failed to register validator", zap.Error(regErr), zap.String("clientIP", clientIP), zap.String("reqID", id))
-		return nil, nil, regErr
+			s.relayMutex.Lock()
+			selectedRelay := s.registrationClients[s.currentRelayIndex]
+			s.currentRelayIndex = (s.currentRelayIndex + 1) % len(s.registrationClients)
+			s.relayMutex.Unlock()
+
+			req := &relaygrpc.RegisterValidatorRequest{
+				ReqId:       id,
+				Payload:     payload,
+				ClientIp:    clientIP,
+				Version:     s.version,
+				NodeId:      c.nodeID,
+				ReceivedAt:  timestamppb.New(receivedAt),
+				AuthHeader:  authHeader,
+				SecretToken: s.secretToken,
+			}
+
+			out, err := selectedRelay.RegisterValidator(clientCtx, req)
+			if err != nil {
+				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
+				return
+			}
+			if out == nil {
+				errChan <- toErrorResp(http.StatusInternalServerError, "failed to register", id, "empty response from relay", clientIP)
+				return
+			}
+			if out.Code != uint32(codes.OK) {
+				errChan <- toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
+				return
+			}
+			respChan <- out
+		}(registrationClient)
 	}
-	return struct{}{}, nil, nil
+
+	// Wait for the first successful response or until all responses are processed
+	for i := 0; i < len(s.registrationClients); i++ {
+		select {
+		case <-ctx.Done():
+			return nil, nil, toErrorResp(http.StatusInternalServerError, "failed to register", id, ctx.Err().Error(), clientIP)
+		case _err = <-errChan:
+			// if multiple client return errors, first error gets replaced by the subsequent errors
+		case <-respChan:
+			return struct{}{}, nil, nil
+		}
+	}
+	return nil, nil, _err
 }
 
-func (s *Service) WrapStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
+func (s *Service) StartStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
+
+	// Periodically clean up headers
+	go s.cleanUpExpiredHeaders(s.expiredSlotKeyCh)
+	defer close(s.expiredSlotKeyCh)
+
 	for _, client := range s.clients {
 		wg.Add(1)
 		go func(_ctx context.Context, c *Client) {
 			defer wg.Done()
-			s.WrapStreamHeader(_ctx, c)
+			s.handleStream(_ctx, c)
 		}(ctx, client)
 	}
 	wg.Wait()
 }
 
-func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
+func (s *Service) handleStream(ctx context.Context, client *Client) {
 	parentSpan := trace.SpanFromContext(ctx)
 	parentSpan.SetAttributes(
 		attribute.String("method", "streamHeader"),
@@ -134,36 +195,37 @@ func (s *Service) WrapStreamHeader(ctx context.Context, client *Client) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.logger.Warn("Stream header context cancelled")
+			s.logger.Warn("stream header context cancelled")
 			return
 		default:
 			if _, err := s.StreamHeader(ctx, client); err != nil {
-				s.logger.Warn("Failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
+				s.logger.Warn("failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
 			} else {
-				s.logger.Warn("Stream header stopped.  Sleeping 1 second and then reconnecting", zap.String("url", client.URL))
+				s.logger.Warn("stream header stopped.  Sleeping 1 second and then reconnecting", zap.String("url", client.URL))
 			}
 			time.Sleep(1 * time.Second)
 		}
 	}
 }
 
-func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient) (*relaygrpc.StreamHeaderResponse, error) {
+func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.StreamHeaderResponse, error) {
 	id := uuid.NewString()
-	nodeID := fmt.Sprintf("%v-%v", s.nodeID, id)
-
+	client.nodeID = fmt.Sprintf("%v-%v-%v-%v", s.nodeID, client.URL, id, time.Now().UTC().Format("15:04:05.999999999"))
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 
 	parentSpan := trace.SpanFromContext(ctx)
 
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
-		ReqId:   id,
-		NodeId:  nodeID,
-		Version: s.version,
+		ReqId:       id,
+		NodeId:      client.nodeID,
+		Version:     s.version,
+		SecretToken: s.secretToken,
 	})
-	s.logger.Info("streaming headers", zap.String("nodeID", nodeID))
+
+	s.logger.Info("streaming headers", zap.String("nodeID", client.nodeID))
 	parentSpan.SetAttributes(
 		attribute.String("method", "streamHeader"),
-		attribute.String("nodeID", nodeID),
+		attribute.String("nodeID", client.nodeID),
 		attribute.String("reqID", id),
 	)
 
@@ -171,33 +233,84 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 	_, span := s.tracer.Start(parentSpanCtx, "streamHeader")
 	defer span.End()
 
+	s.logger.Info("streaming headers", zap.String("nodeID", client.nodeID), zap.String("url", client.URL))
 	if err != nil {
-		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", nodeID))
+		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 		return nil, err
 	}
+	s.isStreamOpen = true
+	done := make(chan struct{})
+	var once sync.Once
+	closeDone := func() {
+		once.Do(func() {
+			s.logger.Info("calling close done once")
+			close(done)
+		})
+	}
+
+	go func() {
+		select {
+		case <-stream.Context().Done():
+			s.logger.Warn("stream context cancelled, closing connection", zap.Error(stream.Context().Err()), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
+			closeDone()
+		case <-ctx.Done():
+			s.logger.Warn("context cancelled, closing connection", zap.Error(ctx.Err()), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("method", "StreamHeader"), zap.String("url", client.URL))
+			closeDone()
+		}
+	}()
 	for {
+		select {
+		case <-done:
+			return nil, nil
+		default:
+		}
 		header, err := stream.Recv()
 		if err == io.EOF {
-			s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", nodeID))
+			s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
+			closeDone()
 			break
 		}
-		if err != nil {
-			s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", nodeID))
+		_s, ok := status.FromError(err)
+		if !ok {
+			s.logger.Warn("invalid grpc error status", zap.Error(err), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
+			continue
+		}
+
+		if _s.Code() == codes.Canceled {
+			s.logger.Warn("received cancellation signal, shutting down", zap.Error(err), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
+			// mark as canceled to stop the upstream retry loop
+			s.isStreamOpen = false
+			closeDone()
 			break
 		}
 
-		if header.BlockHash == "" {
-			s.logger.Info("received empty blockHash", zap.String("nodeID", nodeID))
+		if _s.Code() != codes.OK {
+			s.logger.Warn("server unavailable,try reconnecting", zap.Error(_s.Err()), zap.String("nodeID", client.nodeID), zap.String("code", _s.Code().String()), zap.String("reqID", id), zap.String("url", client.URL))
+			s.isStreamOpen = false
+			closeDone()
+			break
+		}
+		if err != nil {
+			s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
+			closeDone()
+			break
+		}
+		// Added empty streaming as a temporary workaround to maintain streaming alive
+		// TODO: this need to be handled by adding settings for keep alive params on both server and client
+		if header.GetBlockHash() == "" {
+			s.logger.Debug("received empty stream", zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 			continue
 		}
 		k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", header.GetSlot(), header.GetParentHash(), header.GetPubkey())
 		s.logger.Info("received header",
+			zap.String("reqID", id),
 			zap.Uint64("slot", header.GetSlot()),
 			zap.String("parentHash", header.GetParentHash()),
 			zap.String("blockHash", header.GetBlockHash()),
 			zap.String("blockValue", new(big.Int).SetBytes(header.GetValue()).String()),
 			zap.String("pubKey", header.GetPubkey()),
-			zap.String("nodeID", nodeID),
+			zap.String("nodeID", client.nodeID),
+			zap.String("url", client.URL),
 		)
 		v := &Header{
 			Value:     header.GetValue(),
@@ -212,12 +325,27 @@ func (s *Service) StreamHeader(ctx context.Context, client relaygrpc.RelayClient
 		h := make([]*Header, 0)
 		h = append(h, v)
 		s.headers.Store(k, h)
+
+		// Send the key to chan for expiration after 1 minute to clean-up
+		go func(key string) {
+			<-time.After(time.Minute)
+			s.expiredSlotKeyCh <- key
+		}(k)
 	}
-	s.logger.Warn("closing connection", zap.String("nodeID", nodeID))
+	<-done
+	s.logger.Warn("closing connection", zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 	return nil, nil
 }
 
+func (s *Service) cleanUpExpiredHeaders(expiredKeyCh <-chan string) {
+	for k := range expiredKeyCh {
+		s.logger.Info("cleanup old slot", zap.String("key", k))
+		s.headers.Delete(k)
+	}
+}
+
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
+	startTime := time.Now().UTC()
 	k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", slot, parentHash, pubKey)
 	id := uuid.NewString()
 	parentSpan := trace.SpanFromContext(ctx)
@@ -228,6 +356,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		zap.String("key", k),
 		zap.String("reqID", id),
 	)
+
 	parentSpan.SetAttributes(
 		attribute.String("method", "getHeader"),
 		attribute.String("clientIP", clientIP),
@@ -241,17 +370,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	_, span := s.tracer.Start(parentSpanCtx, "getHeader")
 	defer span.End()
 
-	defer func() {
-		go func() {
-			// cleanup old slots/headers
-			time.AfterFunc(time.Second*30, func() {
-				s.logger.Info("cleanup old slot", zap.String("key", k))
-				s.headers.Delete(k)
-			})
-		}()
-	}()
-
-	_, spanStoringHeader := s.tracer.Start(parentSpanCtx, "storing header")
+	_, spanStoringHeader := s.tracer.Start(parentSpanCtx, "storingHeader")
 	val := new(big.Int)
 	index := 0
 	//TODO: currently storing all the header values for the particular slot
@@ -265,14 +384,50 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			}
 		}
 		out := headers[index]
+		go func() {
+			s.fluentD.LogToFluentD(fluentstats.Record{
+				Type: "relay_proxy_provided_header",
+				Data: map[string]interface{}{
+					"received":   receivedAt,
+					"duration":   time.Since(startTime),
+					"parentHash": parentHash,
+					"pubKey":     pubKey,
+					"blockHash":  out.BlockHash,
+					"reqID":      id,
+					"clientIP":   clientIP,
+					"blockValue": val.String(),
+					"succeeded":  true,
+					"nodeID":     s.nodeID,
+				},
+			}, time.Now().UTC(), "relay-proxy-getHeader")
+		}()
 
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
 	spanStoringHeader.End()
-	return nil, k, toErrorResp(http.StatusNoContent, "", id, fmt.Sprintf("header value is not present for the requested key %v", k), clientIP)
+	msg := fmt.Sprintf("header value is not present for the requested key %v", k)
+	go func() {
+		s.fluentD.LogToFluentD(fluentstats.Record{
+			Type: "relay_proxy_provided_header",
+			Data: map[string]interface{}{
+				"RequestReceivedAt": receivedAt,
+				"duration":          time.Since(startTime),
+				"parentHash":        parentHash,
+				"pubKey":            pubKey,
+				"blockHash":         "",
+				"reqID":             id,
+				"clientIP":          clientIP,
+				"blockValue":        "",
+				"succeeded":         false,
+				"nodeID":            s.nodeID,
+			},
+		}, time.Now().UTC(), "relay-proxy-getHeader")
+	}()
+	return nil, k, toErrorResp(http.StatusNoContent, msg, id, msg, clientIP)
 }
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
+	startTime := time.Now().UTC()
 	id := uuid.NewString()
 	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
@@ -291,50 +446,98 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 
 	parentSpanCtx := trace.ContextWithSpan(ctx, parentSpan)
-	spanCtx, span := s.tracer.Start(parentSpanCtx, "getPayload")
+	_, span := s.tracer.Start(parentSpanCtx, "getPayload")
 	defer span.End()
 
 	req := &relaygrpc.GetPayloadRequest{
-		ReqId:      id,
-		Payload:    payload,
-		ClientIp:   clientIP,
-		Version:    s.version,
-		ReceivedAt: timestamppb.New(receivedAt),
+		ReqId:       id,
+		Payload:     payload,
+		ClientIp:    clientIP,
+		Version:     s.version,
+		ReceivedAt:  timestamppb.New(receivedAt),
+		SecretToken: s.secretToken,
 	}
 	var (
-		err  error
-		out  *relaygrpc.GetPayloadResponse
-		meta string
+		errChan  = make(chan error, len(s.clients))
+		respChan = make(chan *relaygrpc.GetPayloadResponse, len(s.clients))
+		_err     error
+		meta     string
 	)
 	for _, client := range s.clients {
-		out, err = client.GetPayload(spanCtx, req)
-		if err != nil {
-			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
-			continue
-		}
-		if out == nil {
-			err = toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, "empty response from relay", clientIP)
-			continue
-		}
-		meta = fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v-blockHash-%v-proposerIndex-%v", out.GetSlot(), out.GetParentHash(), out.GetPubkey(), out.GetBlockHash(), out.GetProposerIndex())
-		if out.Code != uint32(codes.OK) {
-			err = toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
-			continue
-		}
-		// Return early if one of the node return success
-		return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
+		go func(c relaygrpc.RelayClient) {
+			clientCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+
+			out, err := c.GetPayload(clientCtx, req)
+			if err != nil {
+				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
+				return
+			}
+			if out == nil {
+				errChan <- toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, "empty response from relay", clientIP)
+				return
+			}
+			if out.Code != uint32(codes.OK) {
+				errChan <- toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
+				return
+			}
+			// Set meta and send the response
+			meta = fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v-blockHash-%v-proposerIndex-%v", out.GetSlot(), out.GetParentHash(), out.GetPubkey(), out.GetBlockHash(), out.GetProposerIndex())
+			respChan <- out
+		}(client)
 	}
-	if err != nil {
-		return nil, meta, err
+	// Wait for the first successful response or until all responses are processed
+	for i := 0; i < len(s.clients); i++ {
+		select {
+		case <-ctx.Done():
+			go func() {
+				s.fluentD.LogToFluentD(fluentstats.Record{
+					Type: "relay_proxy_provided_payload",
+					Data: map[string]interface{}{
+						"RequestReceivedAt": receivedAt,
+						"duration":          time.Since(startTime),
+						"slot":              "",
+						"parentHash":        "",
+						"pubKey":            "",
+						"blockHash":         "",
+						"reqID":             id,
+						"clientIP":          clientIP,
+						"succeeded":         false,
+						"nodeID":            s.nodeID,
+					},
+				}, time.Now().UTC(), "relay-proxy-getPayload")
+			}()
+			return nil, meta, toErrorResp(http.StatusInternalServerError, "failed to getPayload", id, ctx.Err().Error(), clientIP)
+		case _err = <-errChan:
+			// if multiple client return errors, first error gets replaced by the subsequent errors
+		case out := <-respChan:
+			go func() {
+				s.fluentD.LogToFluentD(fluentstats.Record{
+					Type: "relay_proxy_provided_payload",
+					Data: map[string]interface{}{
+						"RequestReceivedAt": receivedAt,
+						"duration":          time.Since(startTime),
+						"slot":              out.GetSlot(),
+						"parentHash":        out.GetParentHash(),
+						"pubKey":            out.GetPubkey(),
+						"blockHash":         out.GetBlockHash(),
+						"reqID":             id,
+						"clientIP":          clientIP,
+						"succeeded":         true,
+						"nodeID":            s.nodeID,
+					},
+				}, time.Now().UTC(), "relay-proxy-getPayload")
+			}()
+			return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
+		}
 	}
-	// execution never reaches here
-	return json.RawMessage(out.GetVersionedExecutionPayload()), meta, nil
+	return nil, meta, _err
 }
 
 type ErrorResp struct {
-	Code        int    `json:"code"`
-	Message     string `json:"message"`
-	BlxrMessage BlxrMessage
+	Code        int         `json:"code"`
+	Message     string      `json:"message"`
+	BlxrMessage BlxrMessage `json:"-"`
 }
 
 type BlxrMessage struct {
@@ -357,36 +560,4 @@ func toErrorResp(code int, message, reqID, blxrMessage, clientIP string) *ErrorR
 			clientIP: clientIP,
 		},
 	}
-}
-
-func getRegistrationRelay(ctx context.Context, s *Service, req *relaygrpc.RegisterValidatorRequest, out *relaygrpc.RegisterValidatorResponse, id string, clientIP string, err error) error {
-	for i := 0; i < len(s.registrationClients); i++ {
-		s.relayMutex.Lock()
-		selectedRelay := s.registrationClients[s.currentRelayIndex]
-		s.currentRelayIndex = (s.currentRelayIndex + 1) % len(s.registrationClients)
-		s.relayMutex.Unlock()
-
-		out, err = selectedRelay.RegisterValidator(ctx, req)
-
-		if err != nil {
-			err = toErrorResp(http.StatusInternalServerError, err.Error(), id, "relay returned error", clientIP)
-			s.logger.Warn("failed to register validator", zap.Error(err), zap.String("clientIP", clientIP), zap.String("reqID", id))
-			continue
-		}
-		if out == nil {
-			err = toErrorResp(http.StatusInternalServerError, "failed to register", id, "empty response from relay", clientIP)
-			s.logger.Warn("failed to register validator", zap.Error(err), zap.String("clientIP", clientIP), zap.String("reqID", id))
-			continue
-		}
-		if out.Code != uint32(codes.OK) {
-			err = toErrorResp(http.StatusBadRequest, out.Message, id, "relay returned failure response code", clientIP)
-			s.logger.Warn("failed to register validator", zap.Error(err), zap.String("clientIP", clientIP), zap.String("reqID", id))
-			continue
-		}
-		// Break early if one of the node return success
-		if err == nil && out != nil && out.Code == uint32(codes.OK) {
-			break
-		}
-	}
-	return err
 }

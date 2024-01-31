@@ -29,7 +29,8 @@ func main() {
 	srv := grpc.NewServer(grpc.UnaryInterceptor(registerClientConnectionInterceptor(l)))
 	relaygrpc.RegisterRelayServer(srv, &mockRelayServer{logger: l})
 	reflection.Register(srv)
-	//lint:ignore SA1019  intentionally used setLogger v1
+
+	//nolint:staticcheck // SA1019 grpclog.SetLogger is deprecated: use SetLoggerV2 // intentionally used setLogger v1
 	grpclog.SetLogger(log.New(os.Stdout, "grpc: ", log.LstdFlags))
 	exit := make(chan struct{})
 	go func() {
@@ -38,12 +39,14 @@ func main() {
 		<-shutdown
 		l.Warn("shutting down")
 		signal.Stop(shutdown)
-		srv.Serve(lis)
+		if err := srv.Serve(lis); err != nil {
+			l.Error("failed to shutdown mev-relay-proxy server", zap.Error(err))
+		}
 		close(exit)
 	}()
 	l.Info("starting server ...")
 	if err := srv.Serve(lis); err != nil {
-		l.Fatal("failed to start relay mev-relay-proxy server", zap.Error(err))
+		l.Fatal("failed to start mev-relay-proxy server", zap.Error(err))
 	}
 	<-exit
 }

@@ -1,2 +1,10 @@
 *.sh
+*.env
+
+# Ignore build folder
+bloxroute/
+mev-relay-proxy
 .DS_Store
+
+# Ignore swp files
+*.swp

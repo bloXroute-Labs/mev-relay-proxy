@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/bloXroute-Labs/mev-relay-proxy/api"
+	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	"github.com/google/uuid"
 
 	"time"
@@ -24,6 +25,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 var (
@@ -36,28 +38,56 @@ var (
 
 	listenAddr = flag.String("addr", defaultListenAddr, "mev-relay-proxy server listening address")
 	//lint:ignore U1000 Ignore unused variable
+	relayGRPCURL          = flag.String("relay", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "relay grpc URL")
 	relaysGRPCURL         = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
 	registrationRelaysURL = flag.String("registration-relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "registration relays grpc URL")
 	getHeaderDelayInMS    = flag.Int("get-header-delay-ms", 300, "delay for sending the getHeader request in millisecond")
 	authKey               = flag.String("auth-key", "", "account authentication key")
 	nodeID                = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
 	uptraceDSN            = flag.String("uptrace-dsn", "", "uptrace URL")
+	// fluentD
+	fluentDHostFlag   = flag.String("fluentd-host", "", "fluentd host")
+	beaconGenesisTime = flag.Int64("beacon-genesis-time", 1606824023, "beacon genesis time in unix timestamp")
 )
 
 func main() {
 	flag.Parse()
 
 	l := newLogger(_AppName, _BuildVersion)
+
+	defer func() {
+		if err := l.Sync(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error syncing log: %v\n", err)
+		}
+	}()
+
 	ctx, cancel := context.WithCancel(context.Background())
+
+	keepaliveOpts := grpc.WithKeepaliveParams(keepalive.ClientParameters{
+		Time:                time.Minute,
+		Timeout:             20 * time.Second,
+		PermitWithoutStream: true,
+	})
+
 	// init client connection
 	var (
 		clients             []*api.Client
 		conns               []*grpc.ClientConn
 		registrationClients []*api.Client
+		regConns            []*grpc.ClientConn
 	)
 
 	// Parse the relaysGRPCURL
-	newClients, newConns := getClientsFromURLs(l, *relaysGRPCURL, conns, clients)
+	newClients, newConns := getClientsAndConnsFromURLs(l, *relaysGRPCURL, conns, clients)
+	urls := strings.Split(*relaysGRPCURL, ",")
+	for _, url := range urls {
+		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock(), keepaliveOpts)
+		if err != nil {
+			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
+		}
+		clients = append(clients, &api.Client{URL: url, Conn: conn, RelayClient: relaygrpc.NewRelayClient(conn)})
+		conns = append(conns, conn)
+	}
 	defer func() {
 		for _, conn := range newConns {
 			conn.Close()
@@ -65,7 +95,7 @@ func main() {
 	}()
 
 	// Parse the registrationRelaysURL
-	newRegistrationClients, newRegConns := getClientsFromURLs(l, *registrationRelaysURL, conns, registrationClients)
+	newRegistrationClients, newRegConns := getClientsAndConnsFromURLs(l, *registrationRelaysURL, regConns, registrationClients)
 	defer func() {
 		for _, conn := range newRegConns {
 			conn.Close()
@@ -91,11 +121,12 @@ func main() {
 
 	tracer := otel.Tracer("main")
 
+	// init fluentD if enabled
+	fluentLogger := fluentstats.NewStats(true, *fluentDHostFlag)
+
 	// init service and server
-
-	svc := api.NewService(l, tracer, _BuildVersion, *authKey, *nodeID, newClients, newRegistrationClients...)
-
-	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer)
+	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, fluentLogger, newClients, newRegistrationClients...)
+	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, tracer, fluentLogger, *beaconGenesisTime)
 
 	exit := make(chan struct{})
 	go func() {
@@ -105,14 +136,15 @@ func main() {
 		l.Warn("shutting down")
 		signal.Stop(shutdown)
 		cancel()
+		server.Stop()
 		close(exit)
 	}()
 
 	// start streaming headers
 	go func(_ctx context.Context) {
 		wg := new(sync.WaitGroup)
-		svc.WrapStreamHeaders(_ctx, wg)
-	}(context.Background())
+		svc.StartStreamHeaders(_ctx, wg)
+	}(ctx)
 	if err := server.Start(); err != nil {
 		l.Fatal("failed to start mev-relay-proxy server", zap.Error(err))
 	}
@@ -141,7 +173,7 @@ func getEnv(key string, defaultValue string) string {
 	return defaultValue
 }
 
-func getClientsFromURLs(l *zap.Logger, relaysGRPCURL string, conns []*grpc.ClientConn, clients []*api.Client) ([]*api.Client, []*grpc.ClientConn) {
+func getClientsAndConnsFromURLs(l *zap.Logger, relaysGRPCURL string, conns []*grpc.ClientConn, clients []*api.Client) ([]*api.Client, []*grpc.ClientConn) {
 	// Parse the relaysGRPCURL
 	relays := strings.Split(relaysGRPCURL, ",")
 	// Dial each relay and store the connections

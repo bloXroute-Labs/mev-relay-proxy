@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/zap"
 	"gotest.tools/assert"
 )
@@ -83,7 +84,7 @@ func TestServer_HandleRegistration(t *testing.T) {
 				t.Fatal(err)
 			}
 			rr := httptest.NewRecorder()
-			server := &Server{svc: tc.mockService, logger: zap.NewNop()}
+			server := &Server{svc: tc.mockService, logger: zap.NewNop(), tracer: noop.NewTracerProvider().Tracer("test")}
 			server.HandleRegistration(rr, req)
 
 			assert.Equal(t, rr.Code, tc.expectedCode)
@@ -133,6 +134,23 @@ func TestServer_HandleGetHeader(t *testing.T) {
 			expectedCode:   http.StatusNoContent,
 			expectedOutput: "",
 		},
+		"when getHeader failed with requested header not found": {
+			slot:       "456",
+			parentHash: "ph456",
+			pubKey:     "pk456",
+			mockService: &MockService{
+				logger: zap.NewNop(),
+				GetHeaderFunc: func(ctx context.Context, clientIP, slot, parentHash, pubKey string) (interface{}, any, error) {
+					return nil, nil, &ErrorResp{Code: http.StatusNoContent, Message: "header value is not present for the requested key slot", BlxrMessage: BlxrMessage{
+						reqID:    "dummy-id",
+						msg:      "header value is not present for the requested key slot",
+						clientIP: "0.0.0.0",
+					}}
+				},
+			},
+			expectedCode:   http.StatusNoContent,
+			expectedOutput: "",
+		},
 	}
 
 	for testName, tc := range testCases {
@@ -142,7 +160,7 @@ func TestServer_HandleGetHeader(t *testing.T) {
 				t.Fatal(err)
 			}
 			rr := httptest.NewRecorder()
-			server := &Server{svc: tc.mockService, logger: zap.NewNop()}
+			server := &Server{svc: tc.mockService, logger: zap.NewNop(), tracer: noop.NewTracerProvider().Tracer("test")}
 
 			server.HandleGetHeader(rr, req)
 
@@ -196,7 +214,7 @@ func TestServer_HandleGetPayload(t *testing.T) {
 				t.Fatal(err)
 			}
 			rr := httptest.NewRecorder()
-			server := &Server{svc: tc.mockService, logger: zap.NewNop()}
+			server := &Server{svc: tc.mockService, logger: zap.NewNop(), tracer: noop.NewTracerProvider().Tracer("test")}
 			server.HandleGetPayload(rr, req)
 
 			assert.Equal(t, rr.Code, tc.expectedCode)
