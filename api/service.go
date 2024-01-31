@@ -39,13 +39,11 @@ type IService interface {
 	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error)
 }
 type Service struct {
-	logger  *zap.Logger
-	version string // build version
-	headers *syncmap.SyncMap[string, []*Header]
-	clients []*Client
-	//TODO: add flag to receive node id
-	nodeID string // UUID
-	//slotCleanUpCh chan uint64
+	logger              *zap.Logger
+	version             string // build version
+	headers             *syncmap.SyncMap[string, []*Header]
+	clients             []*Client
+	nodeID              string // UUID
 	authKey             string
 	tracer              trace.Tracer
 	registrationClients []*Client
