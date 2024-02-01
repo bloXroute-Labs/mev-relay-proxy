@@ -39,20 +39,20 @@ type IService interface {
 	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error)
 }
 type Service struct {
-	logger              *zap.Logger
-	version             string // build version
-	headers             *syncmap.SyncMap[string, []*Header]
-	clients             []*Client
-	nodeID              string // UUID
-	authKey             string
-	tracer              trace.Tracer
-	registrationClients []*Client
-	currentRelayIndex   int
-	relayMutex          sync.Mutex
-	secretToken         string
-	isStreamOpen        bool
-	fluentD             fluentstats.Stats
-	expiredSlotKeyCh    chan string
+	logger                        *zap.Logger
+	version                       string // build version
+	headers                       *syncmap.SyncMap[string, []*Header]
+	clients                       []*Client
+	nodeID                        string // UUID
+	authKey                       string
+	tracer                        trace.Tracer
+	registrationClients           []*Client
+	currentRegistrationRelayIndex int
+	registrationRelayMutex        sync.Mutex
+	secretToken                   string
+	isStreamOpen                  bool
+	fluentD                       fluentstats.Stats
+	expiredSlotKeyCh              chan string
 }
 
 type Client struct {
