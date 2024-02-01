@@ -70,18 +70,19 @@ type Header struct {
 
 func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, fluentD fluentstats.Stats, clients []*Client, registrationClients ...*Client) *Service {
 	return &Service{
-		logger:              logger,
-		tracer:              tracer,
-		version:             version,
-		clients:             clients,
-		headers:             syncmap.NewStringMapOf[[]*Header](),
-		nodeID:              nodeID,
-		authKey:             authKey,
-		registrationClients: registrationClients,
-		currentRelayIndex:   0,
-		secretToken:         secretToken,
-		fluentD:             fluentD,
-		expiredSlotKeyCh:    make(chan string, 100),
+		logger:                        logger,
+		tracer:                        tracer,
+		version:                       version,
+		clients:                       clients,
+		headers:                       syncmap.NewStringMapOf[[]*Header](),
+		nodeID:                        nodeID,
+		authKey:                       authKey,
+		registrationClients:           registrationClients,
+		currentRegistrationRelayIndex: 0,
+		secretToken:                   secretToken,
+		fluentD:                       fluentD,
+		expiredSlotKeyCh:              make(chan string, 100),
+		registrationRelayMutex:        sync.Mutex{},
 	}
 }
 
@@ -119,10 +120,10 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
 
-			s.relayMutex.Lock()
-			selectedRelay := s.registrationClients[s.currentRelayIndex]
-			s.currentRelayIndex = (s.currentRelayIndex + 1) % len(s.registrationClients)
-			s.relayMutex.Unlock()
+			s.registrationRelayMutex.Lock()
+			selectedRelay := s.registrationClients[s.currentRegistrationRelayIndex]
+			s.currentRegistrationRelayIndex = (s.currentRegistrationRelayIndex + 1) % len(s.registrationClients)
+			s.registrationRelayMutex.Unlock()
 
 			req := &relaygrpc.RegisterValidatorRequest{
 				ReqId:       id,
