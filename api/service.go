@@ -102,7 +102,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	// decode auth header
 	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
-		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, ctx.Err().Error(), clientIP)
+		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
 	}
 
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", authHeader)
@@ -351,14 +351,14 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	id := uuid.NewString()
 
 	// decode auth header
-	accountID, secret, err := DecodeAuth(authHeader)
+	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
-		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, ctx.Err().Error(), clientIP)
+		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
 	}
 
 	_slot, err := strconv.ParseUint(slot, 10, 64)
 	if err != nil {
-		return nil, nil, toErrorResp(http.StatusBadRequest, "", "invalid slot", id, ctx.Err().Error(), clientIP)
+		return nil, nil, toErrorResp(http.StatusBadRequest, "", fmt.Sprintf("invalid slot %v", slot), id, "invalid slot", clientIP)
 
 	}
 
@@ -425,7 +425,6 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 					"succeeded":     true,
 					"nodeID":        s.nodeID,
 					"accountID":     accountID,
-					"secret":        secret, // store secret ?
 				},
 			}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
 		}()
@@ -441,6 +440,9 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			Data: map[string]interface{}{
 				"RequestReceivedAt": receivedAt,
 				"duration":          time.Since(startTime),
+				"slot":              slot,
+				"slotStartTime":     slotStartTime,
+				"msIntoSlot":        msIntoSlot,
 				"parentHash":        parentHash,
 				"pubKey":            pubKey,
 				"blockHash":         "",
@@ -450,7 +452,6 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 				"succeeded":         false,
 				"nodeID":            s.nodeID,
 				"accountID":         accountID,
-				"secret":            secret, // store secret ?
 			},
 		}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
 	}()
@@ -462,9 +463,9 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	id := uuid.NewString()
 
 	// decode auth header
-	accountID, secret, err := DecodeAuth(authHeader)
+	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
-		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, ctx.Err().Error(), clientIP)
+		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
 	}
 
 	parentSpan := trace.SpanFromContext(ctx)
@@ -544,7 +545,6 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 						"succeeded":         false,
 						"nodeID":            s.nodeID,
 						"accountID":         accountID,
-						"secret":            secret, // store secret ?
 					},
 				}, time.Now().UTC(), s.nodeID, "relay-proxy-getPayload")
 			}()
@@ -573,7 +573,6 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 						"succeeded":         true,
 						"nodeID":            s.nodeID,
 						"accountID":         accountID,
-						"secret":            secret, // store secret ?
 					},
 				}, time.Now().UTC(), s.nodeID, "relay-proxy-getPayload")
 			}()

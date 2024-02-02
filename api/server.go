@@ -155,7 +155,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	parentHash := chi.URLParam(r, "parent_hash")
 	pubKey := chi.URLParam(r, "pubkey")
 	clientIP := GetIPXForwardedFor(r)
-
+	authHeader := getAuth(r)
 	slotInt := s.AToI(slot)
 	slotStartTime := GetSlotStartTime(s.beaconGenesisTime, slotInt)
 
@@ -188,7 +188,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	}
 
 	<-time.After(time.Millisecond * time.Duration(s.getHeaderDelay))
-	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey, "")
+	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey, authHeader)
 	if err != nil {
 		respondError(getHeader, w, err, s.logger, metaData, s.tracer)
 		return
@@ -200,7 +200,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
-
+	authHeader := getAuth(r)
 	parentSpan := trace.SpanFromContext(r.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
 
@@ -219,7 +219,7 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, "", err.Error(), "", "could not read getPayload", ""), s.logger, nil, s.tracer)
 		return
 	}
-	out, metaData, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP, "")
+	out, metaData, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
 	if err != nil {
 		respondError(getPayload, w, err, s.logger, metaData, s.tracer)
 		return
