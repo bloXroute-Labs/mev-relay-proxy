@@ -15,7 +15,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/codes"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -24,7 +26,6 @@ import (
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
 )
 
 const (
@@ -124,18 +125,23 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 				SecretToken: s.secretToken,
 			}
 			out, err := c.RegisterValidator(clientCtx, req)
+			span.AddEvent("registerValidator", trace.WithAttributes(attribute.String("url", c.URL)))
 			if err != nil {
+				span.SetStatus(otelcodes.Error, err.Error())
 				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), "", id, "relay returned error", clientIP)
 				return
 			}
 			if out == nil {
+				span.SetStatus(otelcodes.Error, err.Error())
 				errChan <- toErrorResp(http.StatusInternalServerError, "", "", id, "empty response from relay", clientIP)
 				return
 			}
 			if out.Code != uint32(codes.OK) {
+				span.SetStatus(otelcodes.Error, err.Error())
 				errChan <- toErrorResp(http.StatusBadRequest, "", out.Message, id, "relay returned failure response code", clientIP)
 				return
 			}
+			span.SetStatus(otelcodes.Ok, err.Error())
 			respChan <- out
 		}(client)
 	}
@@ -188,9 +194,10 @@ func (s *Service) handleStream(ctx context.Context, client *Client) {
 		default:
 			if _, err := s.StreamHeader(ctx, client); err != nil {
 				s.logger.Warn("failed to stream header. Sleeping 1 second and then reconnecting", zap.String("url", client.URL), zap.Error(err))
-
+				span.SetAttributes(attribute.KeyValue{Key: "sleepingFor", Value: attribute.Int64Value(1)}, attribute.KeyValue{Key: "error", Value: attribute.StringValue(err.Error())})
 			} else {
 				s.logger.Warn("stream header stopped.  Sleeping 1 second and then reconnecting", zap.String("url", client.URL))
+				span.SetAttributes(attribute.KeyValue{Key: "sleepingFor", Value: attribute.Int64Value(1)}, attribute.KeyValue{Key: "error", Value: attribute.StringValue("stream header stopped.")})
 			}
 			time.Sleep(1 * time.Second)
 		}
@@ -225,6 +232,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	s.logger.Info("streaming headers", zap.String("nodeID", client.nodeID), zap.String("url", client.URL))
 	if err != nil {
 		s.logger.Warn("failed to stream header", zap.Error(err), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
+		span.SetStatus(otelcodes.Error, err.Error())
 		return nil, err
 	}
 	s.isStreamOpen = true
@@ -256,12 +264,14 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		header, err := stream.Recv()
 		if err == io.EOF {
 			s.logger.Warn("stream received EOF", zap.Error(err), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
+			span.SetStatus(otelcodes.Error, err.Error())
 			closeDone()
 			break
 		}
 		_s, ok := status.FromError(err)
 		if !ok {
 			s.logger.Warn("invalid grpc error status", zap.Error(err), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
+			span.SetStatus(otelcodes.Error, "invalid grpc error status")
 			continue
 		}
 
@@ -269,6 +279,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			s.logger.Warn("received cancellation signal, shutting down", zap.Error(err), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
 			// mark as canceled to stop the upstream retry loop
 			s.isStreamOpen = false
+			span.SetStatus(otelcodes.Error, "received cancellation signal")
 			closeDone()
 			break
 		}
@@ -276,11 +287,13 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		if _s.Code() != codes.OK {
 			s.logger.Warn("server unavailable,try reconnecting", zap.Error(_s.Err()), zap.String("nodeID", client.nodeID), zap.String("code", _s.Code().String()), zap.String("reqID", id), zap.String("url", client.URL))
 			s.isStreamOpen = false
+			span.SetStatus(otelcodes.Error, "server unavailable,try reconnecting")
 			closeDone()
 			break
 		}
 		if err != nil {
 			s.logger.Warn("failed to receive stream, disconnecting the stream", zap.Error(err), zap.String("nodeID", client.nodeID), zap.String("reqID", id), zap.String("url", client.URL))
+			span.SetStatus(otelcodes.Error, err.Error())
 			closeDone()
 			break
 		}
@@ -390,12 +403,12 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 				},
 			}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
 		}()
-
+		spanStoringHeader.AddEvent("Header value is present", trace.WithAttributes(attribute.String("blockHash", out.BlockHash), attribute.String("blockValue", val.String())))
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
-	spanStoringHeader.End()
 	msg := fmt.Sprintf("header value is not present for the requested key %v", k)
-
+	spanStoringHeader.AddEvent("Header value is not present", trace.WithAttributes(attribute.String("msg", msg)))
+	spanStoringHeader.End()
 	go func() {
 		s.fluentD.LogToFluentD(fluentstats.Record{
 			Type: "relay_proxy_provided_header",
@@ -460,14 +473,17 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 
 			out, err := c.GetPayload(clientCtx, req)
 			if err != nil {
+				span.SetStatus(otelcodes.Error, err.Error())
 				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), "", id, "relay returned error", clientIP)
 				return
 			}
 			if out == nil {
+				span.SetStatus(otelcodes.Error, "empty response from relay")
 				errChan <- toErrorResp(http.StatusInternalServerError, "", "", id, "empty response from relay", clientIP)
 				return
 			}
 			if out.Code != uint32(codes.OK) {
+				span.SetStatus(otelcodes.Error, out.Message)
 				errChan <- toErrorResp(http.StatusBadRequest, "", out.Message, id, "relay returned failure response code", clientIP)
 				return
 			}

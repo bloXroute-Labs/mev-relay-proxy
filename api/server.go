@@ -11,6 +11,7 @@ import (
 	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	"github.com/go-chi/chi"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
@@ -102,7 +103,6 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
-		attribute.Int("resp_code", 200),
 	)
 
 	_, span := s.tracer.Start(parentSpanCtx, "HandleStatus")
@@ -128,18 +128,19 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
-		attribute.Int("resp_code", 200),
 	)
 
 	_, span := s.tracer.Start(parentSpanCtx, "HandleRegistration")
 
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		respondError(registration, w, toErrorResp(http.StatusInternalServerError, "", err.Error(), "", "could not read registration", ""), s.logger, nil, s.tracer)
 		return
 	}
 
 	out, metaData, err := s.svc.RegisterValidator(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		respondError(registration, w, err, s.logger, metaData, s.tracer)
 		return
 	}
@@ -169,11 +170,9 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
-		attribute.Int("resp_code", 200),
 		attribute.Int64("slotStartTimeUnix", slotStartTime.Unix()),
 		attribute.String("slotStartTime", slotStartTime.UTC().String()),
 		attribute.Int64("slot", slotInt),
-
 		attribute.Int64("sleep", sleep),
 		attribute.Int64("maxSleep", maxSleep),
 	)
@@ -187,7 +186,9 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Duration(sleep) * time.Millisecond)
 	}
 
+	<-time.After(time.Millisecond * time.Duration(s.getHeaderDelay))
 	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey)
+	span.AddEvent("GetHeader")
 	if err != nil {
 		respondError(getHeader, w, err, s.logger, metaData, s.tracer)
 		return
@@ -208,18 +209,20 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
-		attribute.Int("resp_code", 200),
 	)
 
 	_, span := s.tracer.Start(parentSpanCtx, "HandleGetPayload")
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, "", err.Error(), "", "could not read getPayload", ""), s.logger, nil, s.tracer)
 		return
 	}
 	out, metaData, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP)
+	span.AddEvent("GetPayload")
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
 		respondError(getPayload, w, err, s.logger, metaData, s.tracer)
 		return
 	}
@@ -235,12 +238,12 @@ func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logg
 	defer parentSpan.End()
 
 	_, childSpan := tracer.Start(ctx, "respondOK")
+	defer childSpan.End()
 	childSpan.SetAttributes(
 		attribute.String("req_id", "req_id"),
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
-		attribute.Int("resp_code", 200),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -248,7 +251,7 @@ func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logg
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Error("couldn't write OK response", zap.Error(err))
 		http.Error(w, "", http.StatusInternalServerError)
-		childSpan.End()
+		childSpan.SetStatus(codes.Error, "couldn't write OK response")
 		return
 	}
 	var meta string
@@ -269,9 +272,7 @@ func respondError(method string, w http.ResponseWriter, err error, log *zap.Logg
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
-		attribute.Int("resp_code", 200),
 	)
-
 	defer childSpan.End()
 
 	var meta string
@@ -282,6 +283,7 @@ func respondError(method string, w http.ResponseWriter, err error, log *zap.Logg
 	if !ok {
 		log.With(zap.String("req_id", resp.BlxrMessage.reqID), zap.String("blxr_message", resp.BlxrMessage.msg), zap.String("client_ip", resp.BlxrMessage.clientIP), zap.String("resp_message", resp.Message), zap.Int("resp_code", resp.Code)).Error("failed to typecast error response", zap.String("metaData", meta))
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		childSpan.SetStatus(codes.Error, "failed to typecast error response")
 		return
 	}
 
@@ -291,6 +293,7 @@ func respondError(method string, w http.ResponseWriter, err error, log *zap.Logg
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			log.With(zap.String("req_id", resp.BlxrMessage.reqID), zap.String("blxr_message", resp.BlxrMessage.msg), zap.String("client_ip", resp.BlxrMessage.clientIP), zap.String("resp_message", resp.Message), zap.Int("resp_code", resp.Code)).Error("couldn't write error response", zap.Error(err), zap.String("metaData", meta))
 			_, _ = w.Write([]byte(``))
+			childSpan.SetStatus(codes.Error, "couldn't write error response")
 			return
 		}
 		return
