@@ -11,11 +11,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	defaultSleepTime = int64(500)
-	defaultSleepMax  = int64(1200)
-)
-
 // decodeJSON reads JSON from io.Reader and decodes it into a struct
 //
 //lint:ignore U1000  intentionally unused in this file
@@ -60,9 +55,9 @@ func getAuth(r *http.Request) string {
 }
 
 // GetSleepParams returns the sleep time and max sleep time from the request
-func (s *Server) GetSleepParams(r *http.Request) (int64, int64) {
+func (s *Server) GetSleepParams(r *http.Request, delayInMs, maxDelayInMs int64) (int64, int64) {
 
-	sleepTime, sleepMax := defaultSleepTime, defaultSleepMax
+	sleepTime, sleepMax := delayInMs, maxDelayInMs
 
 	sleep := r.URL.Query().Get("sleep")
 	if sleep != "" {
