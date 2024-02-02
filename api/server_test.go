@@ -31,14 +31,14 @@ func (m *MockService) RegisterValidator(ctx context.Context, receivedAt time.Tim
 	}
 	return nil, nil, nil
 }
-func (m *MockService) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
+func (m *MockService) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, any, error) {
 	if m.GetHeaderFunc != nil {
 		return m.GetHeaderFunc(ctx, clientIP, slot, parentHash, pubKey)
 	}
 	return nil, nil, nil
 }
 
-func (m *MockService) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
+func (m *MockService) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string, authHeader string) (any, any, error) {
 	if m.GetPayloadFunc != nil {
 		return m.GetPayloadFunc(ctx, payload, clientIP)
 	}

@@ -157,7 +157,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	clientIP := GetIPXForwardedFor(r)
 
 	slotInt := s.AToI(slot)
-	slotStartTime := s.GetSlotStartTime(slotInt)
+	slotStartTime := GetSlotStartTime(s.beaconGenesisTime, slotInt)
 
 	sleep, maxSleep := s.GetSleepParams(r, s.getHeaderDelay, s.getHeaderMaxDelay)
 
@@ -188,7 +188,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	}
 
 	<-time.After(time.Millisecond * time.Duration(s.getHeaderDelay))
-	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey)
+	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey, "")
 	if err != nil {
 		respondError(getHeader, w, err, s.logger, metaData, s.tracer)
 		return
@@ -219,7 +219,7 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, "", err.Error(), "", "could not read getPayload", ""), s.logger, nil, s.tracer)
 		return
 	}
-	out, metaData, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP)
+	out, metaData, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP, "")
 	if err != nil {
 		respondError(getPayload, w, err, s.logger, metaData, s.tracer)
 		return

@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -54,6 +56,18 @@ func getAuth(r *http.Request) string {
 	return r.URL.Query().Get("auth")
 }
 
+func DecodeAuth(in string) (string, string, error) {
+	decodedBytes, err := base64.StdEncoding.DecodeString(in)
+	if err != nil {
+		return "", "", errors.New("failed to decode auth header")
+	}
+	data := strings.Split(string(decodedBytes), ":")
+	if len(data) != 2 {
+		return "", "", errors.New("invalid auth header")
+	}
+	return data[0], data[1], nil
+}
+
 // GetSleepParams returns the sleep time and max sleep time from the request
 func (s *Server) GetSleepParams(r *http.Request, delayInMs, maxDelayInMs int64) (int64, int64) {
 
@@ -83,6 +97,6 @@ func (s *Server) AToI(value string) int64 {
 }
 
 // GetSlotStartTime returns the time of the start of the slot
-func (s *Server) GetSlotStartTime(slot int64) time.Time {
-	return time.Unix(s.beaconGenesisTime+(int64(slot)*12), 0).UTC()
+func GetSlotStartTime(beaconGenesisTime, slot int64) time.Time {
+	return time.Unix(beaconGenesisTime+(int64(slot)*12), 0).UTC()
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -35,21 +36,22 @@ const (
 
 type IService interface {
 	RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, any, error)
-	GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error)
-	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error)
+	GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, any, error)
+	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string, authHeader string) (any, any, error)
 }
 type Service struct {
-	logger           *zap.Logger
-	version          string // build version
-	headers          *syncmap.SyncMap[string, []*Header]
-	clients          []*Client
-	nodeID           string // UUID
-	authKey          string
-	secretToken      string
-	isStreamOpen     bool
-	tracer           trace.Tracer
-	fluentD          fluentstats.Stats
-	expiredSlotKeyCh chan string
+	logger            *zap.Logger
+	version           string // build version
+	headers           *syncmap.SyncMap[string, []*Header]
+	clients           []*Client
+	nodeID            string // UUID
+	authKey           string
+	secretToken       string
+	beaconGenesisTime int64
+	isStreamOpen      bool
+	tracer            trace.Tracer
+	fluentD           fluentstats.Stats
+	expiredSlotKeyCh  chan string
 }
 
 type Client struct {
@@ -65,18 +67,19 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, fluentD fluentstats.Stats, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, beaconGenesisTime int64, fluentD fluentstats.Stats, clients ...*Client) *Service {
 	return &Service{
-		logger:           logger,
-		version:          version,
-		clients:          clients,
-		headers:          syncmap.NewStringMapOf[[]*Header](),
-		nodeID:           nodeID,
-		authKey:          authKey,
-		secretToken:      secretToken,
-		tracer:           tracer,
-		fluentD:          fluentD,
-		expiredSlotKeyCh: make(chan string, 100),
+		logger:            logger,
+		version:           version,
+		clients:           clients,
+		headers:           syncmap.NewStringMapOf[[]*Header](),
+		nodeID:            nodeID,
+		authKey:           authKey,
+		secretToken:       secretToken,
+		beaconGenesisTime: beaconGenesisTime,
+		tracer:            tracer,
+		fluentD:           fluentD,
+		expiredSlotKeyCh:  make(chan string, 100),
 	}
 }
 
@@ -88,6 +91,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	)
 
 	id := uuid.NewString()
+
 	s.logger.Info("received",
 		zap.String("method", "registerValidator"),
 		zap.String("clientIP", clientIP),
@@ -95,13 +99,20 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.Time("receivedAt", receivedAt),
 	)
 
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	// decode auth header
+	accountID, _, err := DecodeAuth(authHeader)
+	if err != nil {
+		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, ctx.Err().Error(), clientIP)
+	}
+
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", authHeader)
 
 	parentSpan := trace.SpanFromContext(ctx)
 	parentSpan.SetAttributes(
 		attribute.String("method", "registerValidator"),
 		attribute.String("clientIP", clientIP),
 		attribute.String("reqID", id),
+		attribute.String("accountID", accountID),
 		attribute.Int64("receivedAt", receivedAt.Unix()),
 	)
 
@@ -333,10 +344,27 @@ func (s *Service) cleanUpExpiredHeaders(expiredKeyCh <-chan string) {
 	}
 }
 
-func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
+func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, any, error) {
 	startTime := time.Now().UTC()
+
 	k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", slot, parentHash, pubKey)
 	id := uuid.NewString()
+
+	// decode auth header
+	accountID, secret, err := DecodeAuth(authHeader)
+	if err != nil {
+		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, ctx.Err().Error(), clientIP)
+	}
+
+	_slot, err := strconv.ParseUint(slot, 10, 64)
+	if err != nil {
+		return nil, nil, toErrorResp(http.StatusBadRequest, "", "invalid slot", id, ctx.Err().Error(), clientIP)
+
+	}
+
+	slotStartTime := GetSlotStartTime(s.beaconGenesisTime, int64(_slot))
+	msIntoSlot := time.Since(slotStartTime).Milliseconds()
+
 	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
 		zap.String("method", "getHeader"),
@@ -344,6 +372,9 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		zap.String("clientIP", clientIP),
 		zap.String("key", k),
 		zap.String("reqID", id),
+		zap.String("slot", slot),
+		zap.Time("slotStartTime", slotStartTime),
+		zap.Int64("msIntoSlot", msIntoSlot),
 	)
 
 	parentSpan.SetAttributes(
@@ -353,6 +384,9 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		attribute.Int64("receivedAt", receivedAt.Unix()),
 		attribute.String("key", k),
 		attribute.String("reqID", id),
+		attribute.String("slot", slot),
+		attribute.String("slotStartTime", slotStartTime.String()),
+		attribute.Int64("msIntoSlot", msIntoSlot),
 	)
 
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
@@ -377,16 +411,21 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			s.fluentD.LogToFluentD(fluentstats.Record{
 				Type: "relay_proxy_provided_header",
 				Data: map[string]interface{}{
-					"received":   receivedAt,
-					"duration":   time.Since(startTime),
-					"parentHash": parentHash,
-					"pubKey":     pubKey,
-					"blockHash":  out.BlockHash,
-					"reqID":      id,
-					"clientIP":   clientIP,
-					"blockValue": val.String(),
-					"succeeded":  true,
-					"nodeID":     s.nodeID,
+					"received":      receivedAt,
+					"duration":      time.Since(startTime),
+					"slot":          slot,
+					"slotStartTime": slotStartTime,
+					"msIntoSlot":    msIntoSlot,
+					"parentHash":    parentHash,
+					"pubKey":        pubKey,
+					"blockHash":     out.BlockHash,
+					"reqID":         id,
+					"clientIP":      clientIP,
+					"blockValue":    val.String(),
+					"succeeded":     true,
+					"nodeID":        s.nodeID,
+					"accountID":     accountID,
+					"secret":        secret, // store secret ?
 				},
 			}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
 		}()
@@ -410,15 +449,24 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 				"blockValue":        "",
 				"succeeded":         false,
 				"nodeID":            s.nodeID,
+				"accountID":         accountID,
+				"secret":            secret, // store secret ?
 			},
 		}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
 	}()
 	return nil, k, toErrorResp(http.StatusNoContent, "", "", id, msg, clientIP)
 }
 
-func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
+func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, any, error) {
 	startTime := time.Now().UTC()
 	id := uuid.NewString()
+
+	// decode auth header
+	accountID, secret, err := DecodeAuth(authHeader)
+	if err != nil {
+		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, ctx.Err().Error(), clientIP)
+	}
+
 	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
 		zap.String("method", "getPayload"),
@@ -433,7 +481,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		attribute.Int64("receivedAt", receivedAt.Unix()),
 		attribute.String("reqID", id),
 	)
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", authHeader)
 
 	parentSpanCtx := trace.ContextWithSpan(ctx, parentSpan)
 	_, span := s.tracer.Start(parentSpanCtx, "getPayload")
@@ -495,6 +543,8 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 						"clientIP":          clientIP,
 						"succeeded":         false,
 						"nodeID":            s.nodeID,
+						"accountID":         accountID,
+						"secret":            secret, // store secret ?
 					},
 				}, time.Now().UTC(), s.nodeID, "relay-proxy-getPayload")
 			}()
@@ -503,12 +553,18 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			// if multiple client return errors, first error gets replaced by the subsequent errors
 		case out := <-respChan:
 			go func() {
+
+				slotStartTime := GetSlotStartTime(s.beaconGenesisTime, int64(out.GetSlot()))
+				msIntoSlot := time.Since(slotStartTime).Milliseconds()
+
 				s.fluentD.LogToFluentD(fluentstats.Record{
 					Type: "relay_proxy_provided_payload",
 					Data: map[string]interface{}{
 						"RequestReceivedAt": receivedAt,
 						"duration":          time.Since(startTime),
 						"slot":              out.GetSlot(),
+						"slotStartTime":     slotStartTime,
+						"msIntoSlot":        msIntoSlot,
 						"parentHash":        out.GetParentHash(),
 						"pubKey":            out.GetPubkey(),
 						"blockHash":         out.GetBlockHash(),
@@ -516,6 +572,8 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 						"clientIP":          clientIP,
 						"succeeded":         true,
 						"nodeID":            s.nodeID,
+						"accountID":         accountID,
+						"secret":            secret, // store secret ?
 					},
 				}, time.Now().UTC(), s.nodeID, "relay-proxy-getPayload")
 			}()
