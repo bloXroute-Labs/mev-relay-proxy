@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -88,7 +89,21 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		_err     error
 	)
 
+	parentSpan := trace.SpanFromContext(ctx)
+	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	_, span := s.tracer.Start(ctx, "registerValidator")
+	defer span.End()
 	id := uuid.NewString()
+
+	span.SetAttributes(
+		attribute.String("method", "registerValidator"),
+		attribute.String("clientIP", clientIP),
+		attribute.String("reqID", id),
+		attribute.String("tracerID", parentSpan.SpanContext().TraceID().String()),
+		attribute.Int64("receivedAt", receivedAt.Unix()),
+	)
+
 	s.logger.Info("received",
 		zap.String("method", "registerValidator"),
 		zap.String("clientIP", clientIP),
@@ -96,22 +111,9 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.Time("receivedAt", receivedAt),
 	)
 
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-
-	parentSpan := trace.SpanFromContext(ctx)
-	parentSpan.SetAttributes(
-		attribute.String("method", "registerValidator"),
-		attribute.String("clientIP", clientIP),
-		attribute.String("reqID", id),
-		attribute.Int64("receivedAt", receivedAt.Unix()),
-	)
-
-	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
-	_, span := s.tracer.Start(spanCtx, "registerValidator")
-	defer span.End()
-
 	for _, client := range s.clients {
 		go func(c *Client) {
+			_, regSpan := s.tracer.Start(ctx, "registerValidatorForClient")
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
 			req := &relaygrpc.RegisterValidatorRequest{
@@ -125,23 +127,23 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 				SecretToken: s.secretToken,
 			}
 			out, err := c.RegisterValidator(clientCtx, req)
-			span.AddEvent("registerValidator", trace.WithAttributes(attribute.String("url", c.URL)))
+			regSpan.AddEvent("registerValidator", trace.WithAttributes(attribute.String("url", c.URL)))
 			if err != nil {
-				span.SetStatus(otelcodes.Error, err.Error())
+				regSpan.SetStatus(otelcodes.Error, err.Error())
 				errChan <- toErrorResp(http.StatusInternalServerError, err.Error(), "", id, "relay returned error", clientIP)
 				return
 			}
 			if out == nil {
-				span.SetStatus(otelcodes.Error, err.Error())
+				regSpan.SetStatus(otelcodes.Error, errors.New("empty response from relay").Error())
 				errChan <- toErrorResp(http.StatusInternalServerError, "", "", id, "empty response from relay", clientIP)
 				return
 			}
 			if out.Code != uint32(codes.OK) {
-				span.SetStatus(otelcodes.Error, err.Error())
+				regSpan.SetStatus(otelcodes.Error, errors.New("relay returned failure response code").Error())
 				errChan <- toErrorResp(http.StatusBadRequest, "", out.Message, id, "relay returned failure response code", clientIP)
 				return
 			}
-			span.SetStatus(otelcodes.Ok, err.Error())
+			regSpan.SetStatus(otelcodes.Ok, "relay returned success response code")
 			respChan <- out
 		}(client)
 	}
@@ -178,13 +180,15 @@ func (s *Service) StartStreamHeaders(ctx context.Context, wg *sync.WaitGroup) {
 
 func (s *Service) handleStream(ctx context.Context, client *Client) {
 	parentSpan := trace.SpanFromContext(ctx)
-	parentSpan.SetAttributes(
+	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span := s.tracer.Start(ctx, "streamHeader")
+	defer span.End()
+
+	span.SetAttributes(
 		attribute.String("method", "streamHeader"),
 		attribute.String("url", client.URL),
+		attribute.String("tracerID", parentSpan.SpanContext().TraceID().String()),
 	)
-	spanCtx := trace.ContextWithSpan(ctx, parentSpan)
-	_, span := s.tracer.Start(spanCtx, "streamHeader")
-	defer span.End()
 
 	for {
 		select {
@@ -205,11 +209,13 @@ func (s *Service) handleStream(ctx context.Context, client *Client) {
 }
 
 func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.StreamHeaderResponse, error) {
+	parentSpan := trace.SpanFromContext(ctx)
+	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	_, span := s.tracer.Start(ctx, "streamHeader")
+	defer span.End()
 	id := uuid.NewString()
 	client.nodeID = fmt.Sprintf("%v-%v-%v-%v", s.nodeID, client.URL, id, time.Now().UTC().Format("15:04:05.999999999"))
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-
-	parentSpan := trace.SpanFromContext(ctx)
 
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:       id,
@@ -219,15 +225,12 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	})
 
 	s.logger.Info("streaming headers", zap.String("nodeID", client.nodeID))
-	parentSpan.SetAttributes(
+	span.SetAttributes(
 		attribute.String("method", "streamHeader"),
 		attribute.String("nodeID", client.nodeID),
+		attribute.String("tracerID", parentSpan.SpanContext().TraceID().String()),
 		attribute.String("reqID", id),
 	)
-
-	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(parentSpanCtx, "streamHeader")
-	defer span.End()
 
 	s.logger.Info("streaming headers", zap.String("nodeID", client.nodeID), zap.String("url", client.URL))
 	if err != nil {
@@ -347,37 +350,36 @@ func (s *Service) cleanUpExpiredHeaders(expiredKeyCh <-chan string) {
 }
 
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
+	parentSpan := trace.SpanFromContext(ctx)
+	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span := s.tracer.Start(ctx, "getHeader")
+	defer span.End()
 	startTime := time.Now().UTC()
 	k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", slot, parentHash, pubKey)
 	id := uuid.NewString()
-	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
 		zap.String("method", "getHeader"),
 		zap.Time("receivedAt", receivedAt),
 		zap.String("clientIP", clientIP),
 		zap.String("key", k),
 		zap.String("reqID", id),
+		zap.Any("TraceID", parentSpan.SpanContext().TraceID),
 	)
 
-	parentSpan.SetAttributes(
+	span.SetAttributes(
 		attribute.String("method", "getHeader"),
 		attribute.String("clientIP", clientIP),
 		attribute.String("reqID", id),
 		attribute.Int64("receivedAt", receivedAt.Unix()),
 		attribute.String("key", k),
-		attribute.String("reqID", id),
+		attribute.String("tracerID", parentSpan.SpanContext().TraceID().String()),
 	)
-
-	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(parentSpanCtx, "getHeader")
-	defer span.End()
-
-	_, spanStoringHeader := s.tracer.Start(parentSpanCtx, "storingHeader")
 	val := new(big.Int)
 	index := 0
 	//TODO: currently storing all the header values for the particular slot
 	// can be stored only the higher values to avoid looping through all the values
 	if headers, ok := s.headers.Load(k); ok {
+		_, spanStoringHeader := s.tracer.Start(ctx, "storingHeader")
 		for i, header := range headers {
 			hVal := new(big.Int).SetBytes(header.Value)
 			if hVal.Cmp(val) == 1 {
@@ -407,8 +409,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		return json.RawMessage(out.Payload), fmt.Sprintf("%v-blockHash-%v-value-%v", k, out.BlockHash, val.String()), nil
 	}
 	msg := fmt.Sprintf("header value is not present for the requested key %v", k)
-	spanStoringHeader.AddEvent("Header value is not present", trace.WithAttributes(attribute.String("msg", msg)))
-	spanStoringHeader.End()
+	span.AddEvent("Header value is not present", trace.WithAttributes(attribute.String("msg", msg)))
 	go func() {
 		s.fluentD.LogToFluentD(fluentstats.Record{
 			Type: "relay_proxy_provided_header",
@@ -430,27 +431,29 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 }
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
+	parentSpan := trace.SpanFromContext(ctx)
+	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	_, span := s.tracer.Start(ctx, "getPayload")
+	defer span.End()
+
 	startTime := time.Now().UTC()
 	id := uuid.NewString()
-	parentSpan := trace.SpanFromContext(ctx)
+
 	s.logger.Info("received",
 		zap.String("method", "getPayload"),
 		zap.String("clientIP", clientIP),
 		zap.String("reqID", id),
+		zap.Any("TraceID", span.SpanContext().TraceID),
 		zap.Time("receivedAt", receivedAt),
 	)
-	parentSpan.SetAttributes(
+	span.SetAttributes(
 		attribute.String("method", "getPayload"),
 		attribute.String("clientIP", clientIP),
 		attribute.String("reqID", id),
+		attribute.String("tracerID", parentSpan.SpanContext().TraceID().String()),
 		attribute.Int64("receivedAt", receivedAt.Unix()),
-		attribute.String("reqID", id),
 	)
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-
-	parentSpanCtx := trace.ContextWithSpan(ctx, parentSpan)
-	_, span := s.tracer.Start(parentSpanCtx, "getPayload")
-	defer span.End()
 
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:       id,
