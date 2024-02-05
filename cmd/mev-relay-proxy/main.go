@@ -115,7 +115,10 @@ func main() {
 	)
 	// Send buffered spans and free resources.
 	defer func() {
-		if err := uptrace.Shutdown(ctx); err != nil {
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		if err := uptrace.Shutdown(ctxWithTimeout); err != nil {
 			l.Error("failed to shutdown uptrace", zap.Error(err))
 		}
 	}()
