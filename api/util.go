@@ -1,7 +1,14 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
+
+	"fmt"
+	eth2Api "github.com/attestantio/go-eth2-client/api"
+	eth2ApiV1Capella "github.com/attestantio/go-eth2-client/api/v1/capella"
+	eth2ApiV1Deneb "github.com/attestantio/go-eth2-client/api/v1/deneb"
+	"github.com/attestantio/go-eth2-client/spec"
 	"io"
 	"net/http"
 	"strconv"
@@ -54,6 +61,18 @@ func getAuth(r *http.Request) string {
 	return r.URL.Query().Get("auth")
 }
 
+func DecodeAuth(in string) (string, string, error) {
+	decodedBytes, err := base64.StdEncoding.DecodeString(in)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to decode auth header")
+	}
+	data := strings.Split(string(decodedBytes), ":")
+	if len(data) != 2 {
+		return "", "", fmt.Errorf("invalid auth header")
+	}
+	return data[0], data[1], nil
+}
+
 // GetSleepParams returns the sleep time and max sleep time from the request
 func (s *Server) GetSleepParams(r *http.Request, delayInMs, maxDelayInMs int64) (int64, int64) {
 
@@ -83,6 +102,40 @@ func (s *Server) AToI(value string) int64 {
 }
 
 // GetSlotStartTime returns the time of the start of the slot
-func (s *Server) GetSlotStartTime(slot int64) time.Time {
-	return time.Unix(s.beaconGenesisTime+(int64(slot)*12), 0).UTC()
+func GetSlotStartTime(beaconGenesisTime, slot int64) time.Time {
+	return time.Unix(beaconGenesisTime+(int64(slot)*12), 0).UTC()
+}
+
+type VersionedSignedBlindedBeaconBlock struct {
+	eth2Api.VersionedSignedBlindedBeaconBlock
+}
+
+func (r *VersionedSignedBlindedBeaconBlock) MarshalJSON() ([]byte, error) {
+	switch r.Version { //nolint:exhaustive
+	case spec.DataVersionCapella:
+		return json.Marshal(r.Capella)
+	case spec.DataVersionDeneb:
+		return json.Marshal(r.Deneb)
+	default:
+		return nil, fmt.Errorf("%s is not supported", r.Version)
+	}
+}
+
+func (r *VersionedSignedBlindedBeaconBlock) UnmarshalJSON(input []byte) error {
+	var err error
+
+	denebBlock := new(eth2ApiV1Deneb.SignedBlindedBeaconBlock)
+	if err = json.Unmarshal(input, denebBlock); err == nil {
+		r.Version = spec.DataVersionDeneb
+		r.Deneb = denebBlock
+		return nil
+	}
+
+	capellaBlock := new(eth2ApiV1Capella.SignedBlindedBeaconBlock)
+	if err = json.Unmarshal(input, capellaBlock); err == nil {
+		r.Version = spec.DataVersionCapella
+		r.Capella = capellaBlock
+		return nil
+	}
+	return fmt.Errorf("failed to unmarshal SignedBlindedBeaconBlock : %v", err)
 }

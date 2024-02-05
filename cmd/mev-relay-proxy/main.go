@@ -129,7 +129,7 @@ func main() {
 	fluentLogger := fluentstats.NewStats(true, *fluentDHostFlag)
 
 	// init service and server
-	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, fluentLogger, newClients, newRegistrationClients...)
+	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, *beaconGenesisTime, fluentLogger, newClients, newRegistrationClients...)
 	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, *getHeaderMaxDelayInMS, *beaconGenesisTime, tracer, fluentLogger)
 
 	exit := make(chan struct{})

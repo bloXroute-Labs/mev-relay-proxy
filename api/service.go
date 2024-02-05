@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/big"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -35,8 +37,8 @@ const (
 
 type IService interface {
 	RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, any, error)
-	GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error)
-	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error)
+	GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, any, error)
+	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string, authHeader string) (any, any, error)
 }
 type Service struct {
 	logger                        *zap.Logger
@@ -49,10 +51,11 @@ type Service struct {
 	registrationClients           []*Client
 	currentRegistrationRelayIndex int
 	registrationRelayMutex        sync.Mutex
-	secretToken                   string
-	isStreamOpen                  bool
 	fluentD                       fluentstats.Stats
 	expiredSlotKeyCh              chan string
+	secretToken                   string
+	beaconGenesisTime             int64
+	isStreamOpen                  bool
 }
 
 type Client struct {
@@ -68,21 +71,22 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, fluentD fluentstats.Stats, clients []*Client, registrationClients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, beaconGenesisTime int64, fluentD fluentstats.Stats, clients []*Client, registrationClients ...*Client) *Service {
 	return &Service{
 		logger:                        logger,
-		tracer:                        tracer,
 		version:                       version,
 		clients:                       clients,
 		headers:                       syncmap.NewStringMapOf[[]*Header](),
 		nodeID:                        nodeID,
 		authKey:                       authKey,
-		registrationClients:           registrationClients,
-		currentRegistrationRelayIndex: 0,
 		secretToken:                   secretToken,
+		registrationClients:           registrationClients,
+		registrationRelayMutex:        sync.Mutex{},
+		currentRegistrationRelayIndex: 0,
+		beaconGenesisTime:             beaconGenesisTime,
+		tracer:                        tracer,
 		fluentD:                       fluentD,
 		expiredSlotKeyCh:              make(chan string, 100),
-		registrationRelayMutex:        sync.Mutex{},
 	}
 }
 
@@ -94,6 +98,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	)
 
 	id := uuid.NewString()
+
 	s.logger.Info("received",
 		zap.String("method", "registerValidator"),
 		zap.String("clientIP", clientIP),
@@ -101,6 +106,13 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		zap.Time("receivedAt", receivedAt),
 	)
 
+	// decode auth header
+	accountID, _, err := DecodeAuth(authHeader)
+	if err != nil {
+		s.logger.Warn("failed to decode auth header", zap.Error(err), zap.String("authHeader", authHeader), zap.String("reqID", id), zap.String("clientIP", clientIP))
+		//zap.Error(err), 		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
+	}
+	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 
 	parentSpan := trace.SpanFromContext(ctx)
@@ -108,6 +120,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		attribute.String("method", "registerValidator"),
 		attribute.String("clientIP", clientIP),
 		attribute.String("reqID", id),
+		attribute.String("accountID", accountID),
 		attribute.Int64("receivedAt", receivedAt.Unix()),
 	)
 
@@ -346,10 +359,28 @@ func (s *Service) cleanUpExpiredHeaders(expiredKeyCh <-chan string) {
 	}
 }
 
-func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey string) (any, any, error) {
+func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, any, error) {
 	startTime := time.Now().UTC()
+
 	k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", slot, parentHash, pubKey)
 	id := uuid.NewString()
+
+	// decode auth header
+	accountID, _, err := DecodeAuth(authHeader)
+	if err != nil {
+		s.logger.Warn("failed to decode auth header", zap.Error(err), zap.String("authHeader", authHeader), zap.String("reqID", id), zap.String("clientIP", clientIP))
+		//return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
+	}
+
+	_slot, err := strconv.ParseUint(slot, 10, 64)
+	if err != nil {
+		return nil, nil, toErrorResp(http.StatusBadRequest, "", fmt.Sprintf("invalid slot %v", slot), id, "invalid slot", clientIP)
+
+	}
+
+	slotStartTime := GetSlotStartTime(s.beaconGenesisTime, int64(_slot))
+	msIntoSlot := time.Since(slotStartTime).Milliseconds()
+
 	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
 		zap.String("method", "getHeader"),
@@ -357,6 +388,9 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		zap.String("clientIP", clientIP),
 		zap.String("key", k),
 		zap.String("reqID", id),
+		zap.String("slot", slot),
+		zap.Time("slotStartTime", slotStartTime),
+		zap.Int64("msIntoSlot", msIntoSlot),
 	)
 
 	parentSpan.SetAttributes(
@@ -366,6 +400,9 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		attribute.Int64("receivedAt", receivedAt.Unix()),
 		attribute.String("key", k),
 		attribute.String("reqID", id),
+		attribute.String("slot", slot),
+		attribute.String("slotStartTime", slotStartTime.String()),
+		attribute.Int64("msIntoSlot", msIntoSlot),
 	)
 
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
@@ -390,16 +427,20 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			s.fluentD.LogToFluentD(fluentstats.Record{
 				Type: "relay_proxy_provided_header",
 				Data: map[string]interface{}{
-					"received":   receivedAt,
-					"duration":   time.Since(startTime),
-					"parentHash": parentHash,
-					"pubKey":     pubKey,
-					"blockHash":  out.BlockHash,
-					"reqID":      id,
-					"clientIP":   clientIP,
-					"blockValue": val.String(),
-					"succeeded":  true,
-					"nodeID":     s.nodeID,
+					"received":      receivedAt,
+					"duration":      time.Since(startTime),
+					"slot":          slot,
+					"slotStartTime": slotStartTime,
+					"msIntoSlot":    msIntoSlot,
+					"parentHash":    parentHash,
+					"pubKey":        pubKey,
+					"blockHash":     out.BlockHash,
+					"reqID":         id,
+					"clientIP":      clientIP,
+					"blockValue":    val.String(),
+					"succeeded":     true,
+					"nodeID":        s.nodeID,
+					"accountID":     accountID,
 				},
 			}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
 		}()
@@ -415,6 +456,9 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			Data: map[string]interface{}{
 				"RequestReceivedAt": receivedAt,
 				"duration":          time.Since(startTime),
+				"slot":              slot,
+				"slotStartTime":     slotStartTime,
+				"msIntoSlot":        msIntoSlot,
 				"parentHash":        parentHash,
 				"pubKey":            pubKey,
 				"blockHash":         "",
@@ -423,15 +467,24 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 				"blockValue":        "",
 				"succeeded":         false,
 				"nodeID":            s.nodeID,
+				"accountID":         accountID,
 			},
 		}, time.Now().UTC(), s.nodeID, "relay-proxy-getHeader")
 	}()
 	return nil, k, toErrorResp(http.StatusNoContent, "", "", id, msg, clientIP)
 }
 
-func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string) (any, any, error) {
+func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, any, error) {
 	startTime := time.Now().UTC()
 	id := uuid.NewString()
+
+	// decode auth header
+	accountID, _, err := DecodeAuth(authHeader)
+	if err != nil {
+		s.logger.Warn("failed to decode auth header", zap.Error(err), zap.String("authHeader", authHeader), zap.String("reqID", id), zap.String("clientIP", clientIP))
+		//return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
+	}
+
 	parentSpan := trace.SpanFromContext(ctx)
 	s.logger.Info("received",
 		zap.String("method", "getPayload"),
@@ -446,6 +499,8 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		attribute.Int64("receivedAt", receivedAt.Unix()),
 		attribute.String("reqID", id),
 	)
+
+	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 
 	parentSpanCtx := trace.ContextWithSpan(ctx, parentSpan)
@@ -495,19 +550,50 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		case <-ctx.Done():
 
 			go func() {
+				var (
+					slot          int64
+					slotStartTime time.Time
+					msIntoSlot    int64
+					blockHash     string
+				)
+				// Decode payload
+				decodedPayload := new(VersionedSignedBlindedBeaconBlock)
+				if err = json.NewDecoder(bytes.NewReader(payload)).Decode(decodedPayload); err != nil {
+					s.logger.Warn("failed to decode getPayload request")
+				} else {
+					_slot, err := decodedPayload.Slot()
+					if err != nil {
+						s.logger.Warn("failed to decode getPayload slot")
+					} else {
+						slot = int64(_slot)
+						slotStartTime = GetSlotStartTime(s.beaconGenesisTime, slot)
+						msIntoSlot = time.Since(slotStartTime).Milliseconds()
+
+						_blockHash, err := decodedPayload.ExecutionBlockHash()
+						if err != nil {
+							s.logger.Warn("failed to decode getPayload blockHash")
+						} else {
+							blockHash = _blockHash.String()
+						}
+					}
+				}
+
 				s.fluentD.LogToFluentD(fluentstats.Record{
 					Type: "relay_proxy_provided_payload",
 					Data: map[string]interface{}{
 						"RequestReceivedAt": receivedAt,
 						"duration":          time.Since(startTime),
-						"slot":              "",
+						"slotStartTime":     slotStartTime,
+						"msIntoSlot":        msIntoSlot,
+						"slot":              slot,
 						"parentHash":        "",
 						"pubKey":            "",
-						"blockHash":         "",
+						"blockHash":         blockHash,
 						"reqID":             id,
 						"clientIP":          clientIP,
 						"succeeded":         false,
 						"nodeID":            s.nodeID,
+						"accountID":         accountID,
 					},
 				}, time.Now().UTC(), s.nodeID, "relay-proxy-getPayload")
 			}()
@@ -516,12 +602,18 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			// if multiple client return errors, first error gets replaced by the subsequent errors
 		case out := <-respChan:
 			go func() {
+
+				slotStartTime := GetSlotStartTime(s.beaconGenesisTime, int64(out.GetSlot()))
+				msIntoSlot := time.Since(slotStartTime).Milliseconds()
+
 				s.fluentD.LogToFluentD(fluentstats.Record{
 					Type: "relay_proxy_provided_payload",
 					Data: map[string]interface{}{
 						"RequestReceivedAt": receivedAt,
 						"duration":          time.Since(startTime),
 						"slot":              out.GetSlot(),
+						"slotStartTime":     slotStartTime,
+						"msIntoSlot":        msIntoSlot,
 						"parentHash":        out.GetParentHash(),
 						"pubKey":            out.GetPubkey(),
 						"blockHash":         out.GetBlockHash(),
@@ -529,6 +621,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 						"clientIP":          clientIP,
 						"succeeded":         true,
 						"nodeID":            s.nodeID,
+						"accountID":         accountID,
 					},
 				}, time.Now().UTC(), s.nodeID, "relay-proxy-getPayload")
 			}()
