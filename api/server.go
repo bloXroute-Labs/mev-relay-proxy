@@ -97,40 +97,38 @@ func (s *Server) Stop() {
 func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 	parentSpan := trace.SpanFromContext(req.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-
+	_, span := s.tracer.Start(parentSpanCtx, "HandleStatus")
+	defer span.End()
 	parentSpan.SetAttributes(
 		attribute.String("req_id", "req_id"),
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
+		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
-
-	_, span := s.tracer.Start(parentSpanCtx, "HandleStatus")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{}`))
-
-	defer span.End()
 }
 
 func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
+	parentSpan := trace.SpanFromContext(r.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span := s.tracer.Start(parentSpanCtx, "HandleRegistration")
+	defer span.End()
+
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := getAuth(r)
 	bodyBytes, err := io.ReadAll(r.Body)
 
-	parentSpan := trace.SpanFromContext(r.Context())
-	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-
-	parentSpan.SetAttributes(
+	span.SetAttributes(
 		attribute.String("req_id", "req_id"),
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
 	)
-
-	_, span := s.tracer.Start(parentSpanCtx, "HandleRegistration")
 
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
@@ -144,13 +142,15 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 		respondError(registration, w, err, s.logger, metaData, s.tracer)
 		return
 	}
-
-	defer span.End()
-
 	respondOK(registration, w, out, s.logger, metaData, s.tracer)
 }
 
 func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
+	parentSpan := trace.SpanFromContext(r.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span := s.tracer.Start(parentSpanCtx, "HandleGetHeader")
+	defer span.End()
+
 	receivedAt := time.Now().UTC()
 	slot := chi.URLParam(r, "slot")
 	parentHash := chi.URLParam(r, "parent_hash")
@@ -162,10 +162,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 
 	sleep, maxSleep := s.GetSleepParams(r, s.getHeaderDelay, s.getHeaderMaxDelay)
 
-	parentSpan := trace.SpanFromContext(r.Context())
-	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-
-	parentSpan.SetAttributes(
+	span.SetAttributes(
 		attribute.String("req_id", "req_id"),
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
@@ -175,9 +172,10 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		attribute.Int64("slot", slotInt),
 		attribute.Int64("sleep", sleep),
 		attribute.Int64("maxSleep", maxSleep),
+		attribute.String("parentHash", parentHash),
+		attribute.String("pubKey", pubKey),
+		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
-
-	_, span := s.tracer.Start(parentSpanCtx, "HandleGetHeader")
 
 	maxSleepTime := slotStartTime.Add(time.Duration(maxSleep) * time.Millisecond)
 	if time.Now().UTC().Add(time.Duration(sleep) * time.Millisecond).After(maxSleepTime) {
@@ -193,25 +191,25 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		respondError(getHeader, w, err, s.logger, metaData, s.tracer)
 		return
 	}
-	defer span.End()
 	respondOK(getHeader, w, out, s.logger, metaData, s.tracer)
 }
 
 func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
+	parentSpan := trace.SpanFromContext(r.Context())
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span := s.tracer.Start(parentSpanCtx, "HandleGetPayload")
+	defer span.End()
+
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
 
-	parentSpan := trace.SpanFromContext(r.Context())
-	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-
-	parentSpan.SetAttributes(
+	span.SetAttributes(
 		attribute.String("req_id", "req_id"),
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
+		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
-
-	_, span := s.tracer.Start(parentSpanCtx, "HandleGetPayload")
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -226,24 +224,19 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 		respondError(getPayload, w, err, s.logger, metaData, s.tracer)
 		return
 	}
-
-	defer span.End()
-
 	respondOK(getPayload, w, out, s.logger, metaData, s.tracer)
 }
 
 func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logger, metaData any, tracer trace.Tracer) {
+	_, span := tracer.Start(context.Background(), "respondOK-main")
+	defer span.End()
 
-	ctx, parentSpan := tracer.Start(context.Background(), "respondOK-main")
-	defer parentSpan.End()
-
-	_, childSpan := tracer.Start(ctx, "respondOK")
-	defer childSpan.End()
-	childSpan.SetAttributes(
+	span.SetAttributes(
 		attribute.String("req_id", "req_id"),
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
+		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -251,29 +244,28 @@ func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logg
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Error("couldn't write OK response", zap.Error(err))
 		http.Error(w, "", http.StatusInternalServerError)
-		childSpan.SetStatus(codes.Error, "couldn't write OK response")
+		span.SetStatus(codes.Error, "couldn't write OK response")
 		return
 	}
 	var meta string
 	if metaData != nil {
 		meta = metaData.(string)
 	}
-	childSpan.End()
+	span.End()
 	log.Info(fmt.Sprintf("%s succeeded", method), zap.String("metaData", meta))
 }
 
 func respondError(method string, w http.ResponseWriter, err error, log *zap.Logger, metaData any, tracer trace.Tracer) {
-	ctx, parentSpan := tracer.Start(context.Background(), "respondError-main")
-	defer parentSpan.End()
+	_, span := tracer.Start(context.Background(), "respondError-main")
+	defer span.End()
 
-	_, childSpan := tracer.Start(ctx, "respondError")
-	childSpan.SetAttributes(
+	span.SetAttributes(
 		attribute.String("req_id", "req_id"),
 		attribute.String("blxr_message", "blxr_message"),
 		attribute.String("client_ip", "client_ip"),
 		attribute.String("resp_message", "resp_message"),
+		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
-	defer childSpan.End()
 
 	var meta string
 	if metaData != nil {
@@ -283,7 +275,7 @@ func respondError(method string, w http.ResponseWriter, err error, log *zap.Logg
 	if !ok {
 		log.With(zap.String("req_id", resp.BlxrMessage.reqID), zap.String("blxr_message", resp.BlxrMessage.msg), zap.String("client_ip", resp.BlxrMessage.clientIP), zap.String("resp_message", resp.Message), zap.Int("resp_code", resp.Code)).Error("failed to typecast error response", zap.String("metaData", meta))
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		childSpan.SetStatus(codes.Error, "failed to typecast error response")
+		span.SetStatus(codes.Error, "failed to typecast error response")
 		return
 	}
 
@@ -293,7 +285,7 @@ func respondError(method string, w http.ResponseWriter, err error, log *zap.Logg
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			log.With(zap.String("req_id", resp.BlxrMessage.reqID), zap.String("blxr_message", resp.BlxrMessage.msg), zap.String("client_ip", resp.BlxrMessage.clientIP), zap.String("resp_message", resp.Message), zap.Int("resp_code", resp.Code)).Error("couldn't write error response", zap.Error(err), zap.String("metaData", meta))
 			_, _ = w.Write([]byte(``))
-			childSpan.SetStatus(codes.Error, "couldn't write error response")
+			span.SetStatus(codes.Error, "couldn't write error response")
 			return
 		}
 		return
