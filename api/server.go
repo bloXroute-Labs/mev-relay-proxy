@@ -184,7 +184,6 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Duration(sleep) * time.Millisecond)
 	}
 
-	<-time.After(time.Millisecond * time.Duration(s.getHeaderDelay))
 	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey)
 	span.AddEvent("GetHeader")
 	if err != nil {
