@@ -99,11 +99,12 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
 	_, span := s.tracer.Start(parentSpanCtx, "HandleStatus")
 	defer span.End()
-	parentSpan.SetAttributes(
-		attribute.String("req_id", "req_id"),
-		attribute.String("blxr_message", "blxr_message"),
-		attribute.String("client_ip", "client_ip"),
-		attribute.String("resp_message", "resp_message"),
+	span.SetAttributes(
+		attribute.String("req_host", req.Host),
+		attribute.String("method", req.Method),
+		attribute.String("remote_addr", req.RemoteAddr),
+		attribute.String("request_url", req.RequestURI),
+		attribute.String("auth_header", getAuth(req)),
 		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
 
@@ -124,10 +125,12 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, err := io.ReadAll(r.Body)
 
 	span.SetAttributes(
-		attribute.String("req_id", "req_id"),
-		attribute.String("blxr_message", "blxr_message"),
-		attribute.String("client_ip", "client_ip"),
-		attribute.String("resp_message", "resp_message"),
+		attribute.String("req_host", r.Host),
+		attribute.String("method", r.Method),
+		attribute.String("remote_addr", r.RemoteAddr),
+		attribute.String("request_uri", r.RequestURI),
+		attribute.String("auth_header", authHeader),
+		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
 
 	if err != nil {
@@ -163,17 +166,18 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	sleep, maxSleep := s.GetSleepParams(r, s.getHeaderDelay, s.getHeaderMaxDelay)
 
 	span.SetAttributes(
-		attribute.String("req_id", "req_id"),
-		attribute.String("blxr_message", "blxr_message"),
-		attribute.String("client_ip", "client_ip"),
-		attribute.String("resp_message", "resp_message"),
-		attribute.Int64("slotStartTimeUnix", slotStartTime.Unix()),
-		attribute.String("slotStartTime", slotStartTime.UTC().String()),
+		attribute.String("req_host", r.Host),
+		attribute.String("method", r.Method),
+		attribute.String("remote_addr", r.RemoteAddr),
+		attribute.String("request_uri", r.RequestURI),
+		attribute.String("auth_header", authHeader),
+		attribute.Int64("slot_start_time_unix", slotStartTime.Unix()),
+		attribute.String("slot_start_time", slotStartTime.UTC().String()),
 		attribute.Int64("slot", slotInt),
 		attribute.Int64("sleep", sleep),
-		attribute.Int64("maxSleep", maxSleep),
-		attribute.String("parentHash", parentHash),
-		attribute.String("pubKey", pubKey),
+		attribute.Int64("max_sleep", maxSleep),
+		attribute.String("parent_hash", parentHash),
+		attribute.String("pub_key", pubKey),
 		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
 
@@ -204,10 +208,11 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 	authHeader := getAuth(r)
 
 	span.SetAttributes(
-		attribute.String("req_id", "req_id"),
-		attribute.String("blxr_message", "blxr_message"),
-		attribute.String("client_ip", "client_ip"),
-		attribute.String("resp_message", "resp_message"),
+		attribute.String("req_host", r.Host),
+		attribute.String("method", r.Method),
+		attribute.String("remote_addr", r.RemoteAddr),
+		attribute.String("request_uri", r.RequestURI),
+		attribute.String("auth_header", authHeader),
 		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
 
@@ -232,10 +237,8 @@ func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logg
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("req_id", "req_id"),
-		attribute.String("blxr_message", "blxr_message"),
-		attribute.String("client_ip", "client_ip"),
-		attribute.String("resp_message", "resp_message"),
+		attribute.String("method", method),
+		attribute.Int("response_code", 200),
 		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
 
@@ -258,12 +261,9 @@ func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logg
 func respondError(method string, w http.ResponseWriter, err error, log *zap.Logger, metaData any, tracer trace.Tracer) {
 	_, span := tracer.Start(context.Background(), "respondError-main")
 	defer span.End()
-
 	span.SetAttributes(
-		attribute.String("req_id", "req_id"),
-		attribute.String("blxr_message", "blxr_message"),
-		attribute.String("client_ip", "client_ip"),
-		attribute.String("resp_message", "resp_message"),
+		attribute.String("method", method),
+		attribute.String("err", err.Error()),
 		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
 	)
 

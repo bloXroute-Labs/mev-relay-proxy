@@ -88,15 +88,15 @@ func main() {
 	}()
 
 	l.Info("starting mev-relay-proxy server",
-		zap.String("listenAddr", *listenAddr),
-		zap.String("uptraceDSN", *uptraceDSN),
-		zap.String("nodeID", *nodeID),
-		zap.String("authKey", *authKey),
-		zap.String("relaysGRPCURL", *relaysGRPCURL),
-		zap.Int64("getHeaderDelayInMS", *getHeaderDelayInMS),
-		zap.Int64("getHeaderMaxDelayInMS", *getHeaderMaxDelayInMS),
-		zap.String("fluentDHostFlag", *fluentDHostFlag),
-		zap.Int64("beaconGenesisTime", *beaconGenesisTime),
+		zap.String("listen_addr", *listenAddr),
+		zap.String("uptrace_dsn", *uptraceDSN),
+		zap.String("node_id", *nodeID),
+		zap.String("auth_key", *authKey),
+		zap.String("relays_grpc_url", *relaysGRPCURL),
+		zap.Int64("get_header_delay_in_ms", *getHeaderDelayInMS),
+		zap.Int64("get_header_max_delay_in_ms", *getHeaderMaxDelayInMS),
+		zap.String("fluentD_host_flag", *fluentDHostFlag),
+		zap.Int64("beacon_genesis_time", *beaconGenesisTime),
 	)
 
 	// Configure OpenTelemetry with sensible defaults.
