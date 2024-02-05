@@ -175,7 +175,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	registrationClient := &Client{lis.Addr().String(), "", conn, relayClient}
 	registrationClients := []*Client{registrationClient}
 
-	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "4nDpR2sVxYz1BtU6wFqGhJkLp3Tm5ZoX", 0, fluent, clients, registrationClients...)
+	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "dummy-token", 0, fluent, clients, registrationClients...)
 
 	go func() {
 		if _, err := service.StreamHeader(ctx, c); err != nil {
