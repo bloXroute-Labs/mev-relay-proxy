@@ -4,6 +4,7 @@ go 1.20
 
 require (
 	github.com/attestantio/go-builder-client v0.4.2
+	github.com/attestantio/go-eth2-client v0.19.9
 	github.com/bloXroute-Labs/gateway/v2 v2.127.75-0.20231129102830-ab252898d3c3
 	github.com/bloXroute-Labs/relay-grpc v0.0.15-0.20240129164955-19670307774f
 	github.com/ethereum/go-ethereum v1.13.1
@@ -20,7 +21,6 @@ require (
 )
 
 require (
-	github.com/attestantio/go-eth2-client v0.19.9 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.10.0 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2 // indirect

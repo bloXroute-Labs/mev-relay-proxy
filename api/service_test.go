@@ -26,6 +26,10 @@ import (
 	"gotest.tools/assert"
 )
 
+const (
+	TestAuthHeader = "YmY1YzVkMWItNzAzMC00ZjA1LTlhYzMtMjE3MDk1ZTlkMmI2OjFmNGIwZjU5ZGYwNDM1MWQ2ZWRkOGUxYjU2ZTk3MTNh"
+)
+
 func TestService_RegisterValidator(t *testing.T) {
 
 	tests := map[string]struct {
@@ -67,7 +71,7 @@ func TestService_RegisterValidator(t *testing.T) {
 				tracer:  noop.NewTracerProvider().Tracer("test"),
 				fluentD: fluentstats.NewStats(true, "0.0.0.0:24224"),
 			}
-			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", "")
+			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", TestAuthHeader)
 			if err == nil {
 				assert.Equal(t, got, tt.wantSuccess)
 				return
@@ -117,7 +121,7 @@ func TestService_getPayload(t *testing.T) {
 				tracer:  noop.NewTracerProvider().Tracer("test"),
 				fluentD: fluentstats.NewStats(true, "0.0.0.0:24224"),
 			}
-			got, _, err := s.GetPayload(context.Background(), time.Now(), nil, "")
+			got, _, err := s.GetPayload(context.Background(), time.Now(), nil, "", TestAuthHeader)
 			if err == nil {
 				assert.Equal(t, string(got.(json.RawMessage)), string(tt.wantSuccess))
 				return
@@ -165,7 +169,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	defer conn.Close()
 	relayClient := relaygrpc.NewRelayClient(conn)
 	c := &Client{lis.Addr().String(), "", conn, relayClient}
-	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "4nDpR2sVxYz1BtU6wFqGhJkLp3Tm5ZoX", fluent, c)
+	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "4nDpR2sVxYz1BtU6wFqGhJkLp3Tm5ZoX", 0, fluent, c)
 
 	go func() {
 		if _, err := service.StreamHeader(ctx, c); err != nil {
@@ -206,7 +210,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	}
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
-			got, _, err := service.GetHeader(ctx, time.Now(), "", strconv.FormatUint(tt.in.Slot, 10), tt.in.ParentHash, tt.in.ProposerPubKey)
+			got, _, err := service.GetHeader(ctx, time.Now(), "", strconv.FormatUint(tt.in.Slot, 10), tt.in.ParentHash, tt.in.ProposerPubKey, TestAuthHeader)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetHeader() error = %v, wantErr %v", err, tt.wantErr)
 				return
