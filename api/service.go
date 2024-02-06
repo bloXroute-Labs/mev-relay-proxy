@@ -33,7 +33,7 @@ import (
 
 const (
 	connReconnectTimeout = 5 * time.Second
-	requestTimeout       = 3 * time.Second
+	requestTimeout       = 30 * time.Second
 	stateCheckerInterval = 5 * time.Second
 )
 
