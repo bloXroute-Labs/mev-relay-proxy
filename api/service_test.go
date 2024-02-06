@@ -257,6 +257,118 @@ func TestBlockCancellation(t *testing.T) {
 	assert.Equal(t, *highBid, *result)
 }
 
+func TestBlockCancellationForSamePubKey(t *testing.T) {
+	s := &Service{
+		logger:             zap.NewNop(),
+		bids:               syncmap.NewStringMapOf[[]*Bid](),
+		builderBidsForSlot: cache.New(builderBidsCleanupInterval, builderBidsCleanupInterval),
+	}
+
+	// test no bids found (cache key not found)
+	result, err := s.GetTopBuilderBid("unknown")
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "no builder bids found")
+
+	// set up bids map for cache key
+	cacheKey := s.keyForCachingBids(testSlot1, testParentHash, testProposerPubkey)
+	bidsMap := syncmap.NewStringMapOf[*Bid]()
+	s.builderBidsForSlot.Set(cacheKey, bidsMap, cache.DefaultExpiration)
+
+	// test no bids found (cache key found but bids map empty)
+	result, err = s.GetTopBuilderBid(cacheKey)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "no builder bids found")
+
+	// Add value for testBuilderPubkey1
+	// add low value bid
+	lowBid := &Bid{
+		Value:         new(big.Int).SetInt64(testValueLow).Bytes(),
+		Payload:       []byte(`lowBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash1[:]),
+		BuilderPubkey: testBuilderPubkey1,
+	}
+	bidsMap.Store(testBuilderPubkey1, lowBid)
+
+	// add high value bid
+	highBid := &Bid{
+		Value:         new(big.Int).SetInt64(testValueHigh).Bytes(),
+		Payload:       []byte(`highBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash2[:]),
+		BuilderPubkey: testBuilderPubkey1,
+	}
+	bidsMap.Store(testBuilderPubkey1, highBid)
+
+	// add medium value bid
+	mediumBid := &Bid{
+		Value:         new(big.Int).SetInt64(testValueMedium).Bytes(),
+		Payload:       []byte(`mediumBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash3[:]),
+		BuilderPubkey: testBuilderPubkey1,
+	}
+	bidsMap.Store(testBuilderPubkey1, mediumBid)
+
+	// Add value for testBuilderPubkey2
+	// add low value bid
+	lowBid1 := &Bid{
+		Value:         new(big.Int).SetInt64(testValueLow).Bytes(),
+		Payload:       []byte(`lowBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash1[:]),
+		BuilderPubkey: testBuilderPubkey2,
+	}
+	bidsMap.Store(testBuilderPubkey2, lowBid1)
+
+	// add medium value bid
+	mediumBid1 := &Bid{
+		Value:         new(big.Int).SetInt64(testValueMedium).Bytes(),
+		Payload:       []byte(`mediumBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash3[:]),
+		BuilderPubkey: testBuilderPubkey2,
+	}
+	bidsMap.Store(testBuilderPubkey2, mediumBid1)
+
+	// add high value bid
+	highBid1 := &Bid{
+		Value:         new(big.Int).SetInt64(testValueHigh).Bytes(),
+		Payload:       []byte(`highBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash2[:]),
+		BuilderPubkey: testBuilderPubkey2,
+	}
+	bidsMap.Store(testBuilderPubkey2, highBid1)
+
+	// Add value for testBuilderPubkey3
+	// add medium value bid
+	mediumBid2 := &Bid{
+		Value:         new(big.Int).SetInt64(testValueMedium).Bytes(),
+		Payload:       []byte(`mediumBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash3[:]),
+		BuilderPubkey: testBuilderPubkey3,
+	}
+	bidsMap.Store(testBuilderPubkey3, mediumBid2)
+
+	// add high value bid
+	highBid2 := &Bid{
+		Value:         new(big.Int).SetInt64(testValueHigh).Bytes(),
+		Payload:       []byte(`highBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash2[:]),
+		BuilderPubkey: testBuilderPubkey3,
+	}
+	bidsMap.Store(testBuilderPubkey3, highBid2)
+
+	// add low value bid
+	lowBid2 := &Bid{
+		Value:         new(big.Int).SetInt64(testValueLow).Bytes(),
+		Payload:       []byte(`lowBlock`),
+		BlockHash:     hex.EncodeToString(testBlockHash1[:]),
+		BuilderPubkey: testBuilderPubkey3,
+	}
+	bidsMap.Store(testBuilderPubkey3, lowBid2)
+
+	// test expected high bid found
+	result, err = s.GetTopBuilderBid(cacheKey)
+	assert.Nil(t, err)
+	assert.Equal(t, *highBid1, *result)
+}
+
 func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
