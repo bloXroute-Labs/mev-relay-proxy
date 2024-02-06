@@ -488,11 +488,11 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	//TODO: send fluentd stats for StatusNoContent error cases
 
 	if len(pubKey) != 98 {
-		return nil, k, toErrorResp(http.StatusNoContent, "", errInvalidPubkey.Error(), id, fmt.Sprintf("pub key should be %d long", 98), clientIP)
+		return nil, k, toErrorResp(http.StatusNoContent, "", fmt.Sprintf("pub key should be %d long", 98), id, errInvalidPubkey.Error(), clientIP)
 	}
 
 	if len(parentHash) != 66 {
-		return nil, k, toErrorResp(http.StatusNoContent, "", errInvalidHash.Error(), id, fmt.Sprintf("parent hash hex should be %d long", 66), clientIP)
+		return nil, k, toErrorResp(http.StatusNoContent, "", fmt.Sprintf("parent hash hex should be %d long", 66), id, errInvalidHash.Error(), clientIP)
 	}
 
 	fetchGetHeaderStartTime := time.Now().UTC()

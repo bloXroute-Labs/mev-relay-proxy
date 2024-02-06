@@ -244,7 +244,7 @@ func TestBlockCancellation(t *testing.T) {
 
 	// add medium value bid
 	mediumBid := &Bid{
-		Value:         new(big.Int).SetInt64(testValueHigh).Bytes(),
+		Value:         new(big.Int).SetInt64(testValueMedium).Bytes(),
 		Payload:       []byte(`mediumBlock`),
 		BlockHash:     hex.EncodeToString(testBlockHash3[:]),
 		BuilderPubkey: testBuilderPubkey3,
