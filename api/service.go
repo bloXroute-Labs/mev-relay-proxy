@@ -43,18 +43,21 @@ type IService interface {
 	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string, authHeader string) (any, any, error)
 }
 type Service struct {
-	logger            *zap.Logger
-	version           string // build version
-	headers           *syncmap.SyncMap[string, []*Header]
-	clients           []*Client
-	nodeID            string // UUID
-	authKey           string
-	secretToken       string
-	beaconGenesisTime int64
-	isStreamOpen      bool
-	tracer            trace.Tracer
-	fluentD           fluentstats.Stats
-	expiredSlotKeyCh  chan string
+	logger                        *zap.Logger
+	version                       string // build version
+	headers                       *syncmap.SyncMap[string, []*Header]
+	clients                       []*Client
+	nodeID                        string // UUID
+	authKey                       string
+	tracer                        trace.Tracer
+	registrationClients           []*Client
+	currentRegistrationRelayIndex int
+	registrationRelayMutex        sync.Mutex
+	fluentD                       fluentstats.Stats
+	expiredSlotKeyCh              chan string
+	secretToken                   string
+	beaconGenesisTime             int64
+	isStreamOpen                  bool
 }
 
 type Client struct {
@@ -70,19 +73,22 @@ type Header struct {
 	BlockHash string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, beaconGenesisTime int64, fluentD fluentstats.Stats, clients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, beaconGenesisTime int64, fluentD fluentstats.Stats, clients []*Client, registrationClients ...*Client) *Service {
 	return &Service{
-		logger:            logger,
-		version:           version,
-		clients:           clients,
-		headers:           syncmap.NewStringMapOf[[]*Header](),
-		nodeID:            nodeID,
-		authKey:           authKey,
-		secretToken:       secretToken,
-		beaconGenesisTime: beaconGenesisTime,
-		tracer:            tracer,
-		fluentD:           fluentD,
-		expiredSlotKeyCh:  make(chan string, 100),
+		logger:                        logger,
+		version:                       version,
+		clients:                       clients,
+		headers:                       syncmap.NewStringMapOf[[]*Header](),
+		nodeID:                        nodeID,
+		authKey:                       authKey,
+		secretToken:                   secretToken,
+		registrationClients:           registrationClients,
+		registrationRelayMutex:        sync.Mutex{},
+		currentRegistrationRelayIndex: 0,
+		beaconGenesisTime:             beaconGenesisTime,
+		tracer:                        tracer,
+		fluentD:                       fluentD,
+		expiredSlotKeyCh:              make(chan string, 100),
 	}
 }
 
@@ -126,11 +132,17 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	)
 	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
 
-	for _, client := range s.clients {
+	for _, registrationClient := range s.registrationClients {
 		go func(c *Client) {
 			_, regSpan := s.tracer.Start(ctx, "registerValidatorForClient")
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
+
+			s.registrationRelayMutex.Lock()
+			selectedRelay := s.registrationClients[s.currentRegistrationRelayIndex]
+			s.currentRegistrationRelayIndex = (s.currentRegistrationRelayIndex + 1) % len(s.registrationClients)
+			s.registrationRelayMutex.Unlock()
+
 			req := &relaygrpc.RegisterValidatorRequest{
 				ReqId:       id,
 				Payload:     payload,
@@ -141,7 +153,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 				AuthHeader:  authHeader,
 				SecretToken: s.secretToken,
 			}
-			out, err := c.RegisterValidator(clientCtx, req)
+			out, err := selectedRelay.RegisterValidator(clientCtx, req)
 			regSpan.AddEvent("registerValidator", trace.WithAttributes(attribute.String("url", c.URL)))
 			if err != nil {
 				regSpan.SetStatus(otelcodes.Error, err.Error())
@@ -160,11 +172,11 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			}
 			regSpan.SetStatus(otelcodes.Ok, "relay returned success response code")
 			respChan <- out
-		}(client)
+		}(registrationClient)
 	}
 
 	// Wait for the first successful response or until all responses are processed
-	for i := 0; i < len(s.clients); i++ {
+	for i := 0; i < len(s.registrationClients); i++ {
 		select {
 		case <-ctx.Done():
 			return nil, nil, toErrorResp(http.StatusInternalServerError, "", "failed to register", id, ctx.Err().Error(), clientIP)

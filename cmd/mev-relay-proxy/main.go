@@ -37,13 +37,14 @@ var (
 
 	listenAddr = flag.String("addr", defaultListenAddr, "mev-relay-proxy server listening address")
 	//lint:ignore U1000 Ignore unused variable
-	relayGRPCURL          = flag.String("relay", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "relay grpc URL")
-	relaysGRPCURL         = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
-	getHeaderDelayInMS    = flag.Int64("get-header-delay-ms", 500, "delay for sending the getHeader request in millisecond")
-	getHeaderMaxDelayInMS = flag.Int64("get-header-max-delay-ms", 1200, "max delay for sending the getHeader request in millisecond")
-	authKey               = flag.String("auth-key", "", "account authentication key")
-	nodeID                = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
-	uptraceDSN            = flag.String("uptrace-dsn", "", "uptrace URL")
+	relayGRPCURL              = flag.String("relay", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "relay grpc URL")
+	relaysGRPCURL             = flag.String("relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "comma seperated list of relay grpc URL")
+	registrationRelaysGRPCURL = flag.String("registration-relays", fmt.Sprintf("%v:%d", "127.0.0.1", 5010), "registration relays grpc URL")
+	getHeaderDelayInMS        = flag.Int64("get-header-delay-ms", 500, "delay for sending the getHeader request in millisecond")
+	getHeaderMaxDelayInMS     = flag.Int64("get-header-max-delay-ms", 1200, "max delay for sending the getHeader request in millisecond")
+	authKey                   = flag.String("auth-key", "", "account authentication key")
+	nodeID                    = flag.String("node-id", fmt.Sprintf("mev-relay-proxy-%v", uuid.New().String()), "unique identifier for the node")
+	uptraceDSN                = flag.String("uptrace-dsn", "", "uptrace URL")
 	// fluentD
 	fluentDHostFlag   = flag.String("fluentd-host", "", "fluentd host")
 	beaconGenesisTime = flag.Int64("beacon-genesis-time", 1606824023, "beacon genesis time in unix timestamp, default value set to mainnet")
@@ -51,6 +52,7 @@ var (
 
 func main() {
 	flag.Parse()
+
 	l := newLogger(_AppName, _BuildVersion)
 
 	defer func() {
@@ -69,20 +71,24 @@ func main() {
 
 	// init client connection
 	var (
-		clients []*api.Client
-		conns   []*grpc.ClientConn
+		clients             []*api.Client
+		conns               []*grpc.ClientConn
+		registrationClients []*api.Client
+		regConns            []*grpc.ClientConn
 	)
-	urls := strings.Split(*relaysGRPCURL, ",")
-	for _, url := range urls {
-		conn, err := grpc.Dial(url, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock(), keepaliveOpts)
-		if err != nil {
-			l.Fatal("failed to create mev-relay-proxy client connection", zap.Error(err))
-		}
-		clients = append(clients, &api.Client{URL: url, Conn: conn, RelayClient: relaygrpc.NewRelayClient(conn)})
-		conns = append(conns, conn)
-	}
+
+	// Parse the relaysGRPCURL
+	newClients, newConns := getClientsAndConnsFromURLs(l, *relaysGRPCURL, conns, keepaliveOpts, clients)
 	defer func() {
-		for _, conn := range conns {
+		for _, conn := range newConns {
+			conn.Close()
+		}
+	}()
+
+	// Parse the registrationRelaysURL
+	newRegistrationClients, newRegConns := getClientsAndConnsFromURLs(l, *registrationRelaysGRPCURL, regConns, keepaliveOpts, registrationClients)
+	defer func() {
+		for _, conn := range newRegConns {
 			conn.Close()
 		}
 	}()
@@ -123,7 +129,7 @@ func main() {
 	fluentLogger := fluentstats.NewStats(true, *fluentDHostFlag)
 
 	// init service and server
-	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, *beaconGenesisTime, fluentLogger, clients...)
+	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, *beaconGenesisTime, fluentLogger, newClients, newRegistrationClients...)
 	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, *getHeaderMaxDelayInMS, *beaconGenesisTime, tracer, fluentLogger)
 
 	exit := make(chan struct{})
@@ -169,4 +175,21 @@ func getEnv(key string, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getClientsAndConnsFromURLs(l *zap.Logger, relaysGRPCURL string, conns []*grpc.ClientConn, keepaliveOpts grpc.DialOption, clients []*api.Client) ([]*api.Client, []*grpc.ClientConn) {
+	// Parse the relaysGRPCURL
+	relays := strings.Split(relaysGRPCURL, ",")
+	// Dial each relay and store the connections
+	for _, relayURL := range relays {
+		conn, err := grpc.Dial(relayURL, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock(), keepaliveOpts)
+		if err != nil {
+			// Handle error: failed to dial relay
+			l.Error("failed to dial relay", zap.Error(err), zap.String("url", relayURL))
+		}
+		conns = append(conns, conn)
+		clients = append(clients, &api.Client{URL: relayURL, RelayClient: relaygrpc.NewRelayClient(conn)})
+	}
+
+	return clients, conns
 }

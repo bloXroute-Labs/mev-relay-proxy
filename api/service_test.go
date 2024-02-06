@@ -66,10 +66,11 @@ func TestService_RegisterValidator(t *testing.T) {
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
 			s := &Service{
-				logger:  zap.NewNop(),
-				clients: []*Client{{"", "", nil, &mockRelayClient{RegisterValidatorFunc: tt.f}}},
-				tracer:  noop.NewTracerProvider().Tracer("test"),
-				fluentD: fluentstats.NewStats(true, "0.0.0.0:24224"),
+				logger:              zap.NewNop(),
+				clients:             []*Client{{"", "", nil, &mockRelayClient{RegisterValidatorFunc: tt.f}}},
+				registrationClients: []*Client{{"", "", nil, &mockRelayClient{RegisterValidatorFunc: tt.f}}},
+				tracer:              noop.NewTracerProvider().Tracer("test"),
+				fluentD:             fluentstats.NewStats(true, "0.0.0.0:24224"),
 			}
 			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", TestAuthHeader)
 			if err == nil {
@@ -169,7 +170,12 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	defer conn.Close()
 	relayClient := relaygrpc.NewRelayClient(conn)
 	c := &Client{lis.Addr().String(), "", conn, relayClient}
-	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "4nDpR2sVxYz1BtU6wFqGhJkLp3Tm5ZoX", 0, fluent, c)
+	clients := []*Client{c}
+
+	registrationClient := &Client{lis.Addr().String(), "", conn, relayClient}
+	registrationClients := []*Client{registrationClient}
+
+	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "dummy-token", 0, fluent, clients, registrationClients...)
 
 	go func() {
 		if _, err := service.StreamHeader(ctx, c); err != nil {
