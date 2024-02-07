@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	requestTimeout = 3 * time.Second
+	requestTimeout = 30 * time.Second
 	// cache
 	builderBidsCleanupInterval = 60 * time.Second // 5 slots
 	cacheKeySeparator          = "_"
