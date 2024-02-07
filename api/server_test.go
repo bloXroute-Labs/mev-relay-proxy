@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/zap"
-	"gotest.tools/assert"
 )
 
 type MockService struct {
@@ -21,6 +21,7 @@ type MockService struct {
 	RegisterValidatorFunc func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, any, error)
 	GetHeaderFunc         func(ctx context.Context, clientIP, slot, parentHash, pubKey string) (any, any, error)
 	GetPayloadFunc        func(ctx context.Context, payload []byte, clientIP string) (any, any, error)
+	NodeIDFunc            func() string
 }
 
 var _ IService = (*MockService)(nil)
@@ -43,6 +44,13 @@ func (m *MockService) GetPayload(ctx context.Context, receivedAt time.Time, payl
 		return m.GetPayloadFunc(ctx, payload, clientIP)
 	}
 	return nil, nil, nil
+}
+
+func (m *MockService) NodeID() string {
+	if m.NodeIDFunc != nil {
+		return m.NodeIDFunc()
+	}
+	return ""
 }
 
 func TestServer_HandleRegistration(t *testing.T) {
@@ -90,7 +98,7 @@ func TestServer_HandleRegistration(t *testing.T) {
 			assert.Equal(t, rr.Code, tc.expectedCode)
 			out := new(ErrorResp)
 			err = json.NewDecoder(rr.Body).Decode(out)
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			if tc.expectedError != "" {
 				assert.Equal(t, out.Message, tc.expectedError)
 			}
@@ -220,10 +228,24 @@ func TestServer_HandleGetPayload(t *testing.T) {
 			assert.Equal(t, rr.Code, tc.expectedCode)
 			out := new(ErrorResp)
 			err = json.NewDecoder(rr.Body).Decode(out)
-			assert.NilError(t, err)
+			assert.NoError(t, err)
 			if tc.expectedError != "" {
 				assert.Equal(t, out.Message, tc.expectedError)
 			}
 		})
 	}
+}
+
+func TestNodeID(t *testing.T) {
+	server := &Server{
+		svc: &MockService{
+			logger: zap.NewNop(),
+			NodeIDFunc: func() string {
+				return testNodeID
+			},
+		},
+		logger: zap.NewNop(),
+	}
+
+	assert.Equal(t, server.svc.NodeID(), testNodeID)
 }
