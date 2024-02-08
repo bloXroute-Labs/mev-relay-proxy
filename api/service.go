@@ -723,7 +723,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 					BlockHash:         out.GetBlockHash(),
 					ReqID:             id,
 					ClientIP:          clientIP,
-					Succeeded:         false,
+					Succeeded:         true,
 					NodeID:            s.nodeID,
 				}
 				s.fluentD.LogToFluentD(fluentstats.Record{
