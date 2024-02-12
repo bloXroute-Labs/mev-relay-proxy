@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/patrickmn/go-cache"
 	"io"
 	"math/big"
 	"net/http"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/patrickmn/go-cache"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -449,7 +450,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, any, error) {
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(ctx, "getHeader")
+	ctx, span := s.tracer.Start(ctx, "getHeader")
 	defer span.End()
 	startTime := time.Now().UTC()
 
@@ -499,11 +500,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		attribute.String("auth_header", authHeader),
 	)
 
-	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span = s.tracer.Start(parentSpanCtx, "getHeader")
-	defer span.End()
-
-	_, spanStoringHeader := s.tracer.Start(parentSpanCtx, "storingHeader")
+	_, spanStoringHeader := s.tracer.Start(ctx, "storingHeader")
 
 	//TODO: send fluentd stats for StatusNoContent error cases
 
@@ -575,7 +572,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	_, span := s.tracer.Start(ctx, "getPayload")
+	ctx, span := s.tracer.Start(ctx, "getPayload")
 	defer span.End()
 
 	startTime := time.Now().UTC()
@@ -608,8 +605,6 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 
 	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
 
-	defer span.End()
-
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:       id,
 		Payload:     payload,
@@ -626,6 +621,8 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	)
 	for _, client := range s.clients {
 		go func(c relaygrpc.RelayClient) {
+			ctx, clientGetPayloadSpan := s.tracer.Start(ctx, "getPayloadForClient")
+			defer clientGetPayloadSpan.End()
 			clientCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
 
