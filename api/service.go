@@ -411,13 +411,13 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(ctx, "getHeader")
+	_, span := s.tracer.Start(ctx, getHeader)
 	defer span.End()
 	k := fmt.Sprintf("slot-%v-parentHash-%v-pubKey-%v", slot, parentHash, pubKey)
 	id := uuid.NewString()
 	logMetric := NewLogMetric(
 		[]zap.Field{
-			zap.String("method", "getHeader"),
+			zap.String("method", getHeader),
 			zap.Time("receivedAt", receivedAt),
 			zap.String("clientIP", clientIP),
 			zap.String("reqID", id),
@@ -428,7 +428,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			zap.String("authHeader", authHeader),
 		},
 		[]attribute.KeyValue{
-			attribute.String("method", "getHeader"),
+			attribute.String("method", getHeader),
 			attribute.String("clientIP", clientIP),
 			attribute.String("req", id),
 			attribute.Int64("receivedAt", receivedAt.Unix()),
@@ -538,12 +538,12 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	_, span := s.tracer.Start(ctx, "getPayload")
+	_, span := s.tracer.Start(ctx, getPayload)
 	defer span.End()
 
 	logMetric := NewLogMetric(
 		[]zap.Field{
-			zap.String("method", "getHeader"),
+			zap.String("method", getPayload),
 			zap.Time("receivedAt", receivedAt),
 			zap.String("clientIP", clientIP),
 			zap.String("reqID", id),
@@ -552,7 +552,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			zap.String("authHeader", authHeader),
 		},
 		[]attribute.KeyValue{
-			attribute.String("method", "getPayload"),
+			attribute.String("method", getPayload),
 			attribute.String("clientIP", clientIP),
 			attribute.String("reqID", id),
 			attribute.Int64("receivedAt", receivedAt.Unix()),
