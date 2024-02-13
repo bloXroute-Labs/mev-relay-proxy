@@ -19,7 +19,7 @@ import (
 )
 
 // Router paths
-var (
+const (
 	pathIndex             = "/"
 	pathStatus            = "/eth/v1/builder/status"
 	pathRegisterValidator = "/eth/v1/builder/validators"
