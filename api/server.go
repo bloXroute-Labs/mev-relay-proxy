@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -98,15 +99,15 @@ func (s *Server) Stop() {
 func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 	parentSpan := trace.SpanFromContext(req.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(parentSpanCtx, "HandleStatus")
+	_, span := s.tracer.Start(parentSpanCtx, "handleStatus")
 	defer span.End()
 	span.SetAttributes(
-		attribute.String("req_host", req.Host),
+		attribute.String("reqHost", req.Host),
 		attribute.String("method", req.Method),
-		attribute.String("remote_addr", req.RemoteAddr),
-		attribute.String("request_url", req.RequestURI),
-		attribute.String("auth_header", getAuth(req)),
-		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
+		attribute.String("remoteAddr", req.RemoteAddr),
+		attribute.String("requestURI", req.RequestURI),
+		attribute.String("authHeader", getAuth(req)),
+		attribute.String("traceID", span.SpanContext().TraceID().String()),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -117,42 +118,58 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	parentSpan := trace.SpanFromContext(r.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(parentSpanCtx, "HandleRegistration")
+	_, span := s.tracer.Start(parentSpanCtx, "handleRegistration")
 	defer span.End()
 
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := getAuth(r)
-	bodyBytes, err := io.ReadAll(r.Body)
 
-	span.SetAttributes(
-		attribute.String("req_host", r.Host),
-		attribute.String("method", r.Method),
-		attribute.String("remote_addr", r.RemoteAddr),
-		attribute.String("request_uri", r.RequestURI),
-		attribute.String("auth_header", authHeader),
-		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
+	logMetric := NewLogMetric(
+		[]zap.Field{
+			zap.String("reqHost", r.Host),
+			zap.String("method", r.Method),
+			zap.String("clientIP", clientIP),
+			zap.String("remoteAddr", r.RemoteAddr),
+			zap.String("requestURI", r.RequestURI),
+			zap.String("authHeader", authHeader),
+			zap.String("traceID", span.SpanContext().TraceID().String()),
+		},
+		[]attribute.KeyValue{
+			attribute.String("reqHost", r.Host),
+			attribute.String("method", r.Method),
+			attribute.String("clientIP", clientIP),
+			attribute.String("remoteAddr", r.RemoteAddr),
+			attribute.String("requestURI", r.RequestURI),
+			attribute.String("authHeader", authHeader),
+			attribute.String("traceID", span.SpanContext().TraceID().String()),
+		},
 	)
-
+	span.SetAttributes(logMetric.attributes...)
+	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		respondError(registration, w, toErrorResp(http.StatusInternalServerError, "", err.Error(), "", "could not read registration", ""), s.logger, nil, s.tracer)
+		logMetric.String("proxyError", err.Error())
+		logMetric.Error(errors.New("could not read registration"))
+		respondError(registration, w, toErrorResp(http.StatusInternalServerError, "could not read registration"), s.logger, s.tracer, logMetric)
 		return
 	}
 
-	out, metaData, err := s.svc.RegisterValidator(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
+	out, lm, err := s.svc.RegisterValidator(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
+	logMetric.Merge(lm)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		respondError(registration, w, err, s.logger, metaData, s.tracer)
+		respondError(registration, w, err, s.logger, s.tracer, logMetric)
 		return
 	}
-	respondOK(registration, w, out, s.logger, metaData, s.tracer)
+
+	respondOK(registration, w, out, s.logger, s.tracer, logMetric)
 }
 
 func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	parentSpan := trace.SpanFromContext(r.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(parentSpanCtx, "HandleGetHeader")
+	_, span := s.tracer.Start(parentSpanCtx, "handleGetHeader")
 	defer span.End()
 
 	receivedAt := time.Now().UTC()
@@ -165,22 +182,42 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	slotStartTime := GetSlotStartTime(s.beaconGenesisTime, slotInt)
 
 	sleep, maxSleep := s.GetSleepParams(r, s.getHeaderDelay, s.getHeaderMaxDelay)
-
-	span.SetAttributes(
-		attribute.String("req_host", r.Host),
-		attribute.String("method", r.Method),
-		attribute.String("remote_addr", r.RemoteAddr),
-		attribute.String("request_uri", r.RequestURI),
-		attribute.String("auth_header", authHeader),
-		attribute.Int64("slot_start_time_unix", slotStartTime.Unix()),
-		attribute.String("slot_start_time", slotStartTime.UTC().String()),
-		attribute.Int64("slot", slotInt),
-		attribute.Int64("sleep", sleep),
-		attribute.Int64("max_sleep", maxSleep),
-		attribute.String("parent_hash", parentHash),
-		attribute.String("pub_key", pubKey),
-		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
+	logMetric := NewLogMetric(
+		[]zap.Field{
+			zap.String("reqHost", r.Host),
+			zap.String("method", r.Method),
+			zap.String("remoteAddr", r.RemoteAddr),
+			zap.String("requestURI", r.RequestURI),
+			zap.String("clientIP", clientIP),
+			zap.String("authHeader", authHeader),
+			zap.String("traceID", span.SpanContext().TraceID().String()),
+			zap.Int64("slotStartTimeUnix", slotStartTime.Unix()),
+			zap.String("slotStartTime", slotStartTime.UTC().String()),
+			zap.Int64("slot", slotInt),
+			zap.Int64("sleep", sleep),
+			zap.Int64("maxSleep", maxSleep),
+			zap.String("parentHash", parentHash),
+			zap.String("pubKey", pubKey),
+			zap.String("traceID", span.SpanContext().TraceID().String()),
+		},
+		[]attribute.KeyValue{
+			attribute.String("reqHost", r.Host),
+			attribute.String("method", r.Method),
+			attribute.String("clientIP", clientIP),
+			attribute.String("remoteAddr", r.RemoteAddr),
+			attribute.String("requestURI", r.RequestURI),
+			attribute.String("authHeader", authHeader),
+			attribute.Int64("slotStartTimeUnix", slotStartTime.Unix()),
+			attribute.String("slotStartTime", slotStartTime.UTC().String()),
+			attribute.Int64("slot", slotInt),
+			attribute.Int64("sleep", sleep),
+			attribute.Int64("maxSleep", maxSleep),
+			attribute.String("parentHash", parentHash),
+			attribute.String("pubKey", pubKey),
+			attribute.String("traceID", span.SpanContext().TraceID().String()),
+		},
 	)
+	span.SetAttributes(logMetric.attributes...)
 
 	maxSleepTime := slotStartTime.Add(time.Duration(maxSleep) * time.Millisecond)
 	if time.Now().UTC().Add(time.Duration(sleep) * time.Millisecond).After(maxSleepTime) {
@@ -189,122 +226,115 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Duration(sleep) * time.Millisecond)
 	}
 
-	out, metaData, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey, authHeader)
-	span.AddEvent("GetHeader")
+	span.AddEvent("getHeader")
+	out, lm, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey, authHeader)
+	logMetric.Merge(lm)
 	if err != nil {
-		respondError(getHeader, w, err, s.logger, metaData, s.tracer)
+		respondError(getHeader, w, err, s.logger, s.tracer, logMetric)
 		return
 	}
-	respondOK(getHeader, w, out, s.logger, metaData, s.tracer)
+	respondOK(getHeader, w, out, s.logger, s.tracer, logMetric)
 }
 
 func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 	parentSpan := trace.SpanFromContext(r.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(parentSpanCtx, "HandleGetPayload")
+	_, span := s.tracer.Start(parentSpanCtx, "handleGetPayload")
 	defer span.End()
 
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := getAuth(r)
-
-	span.SetAttributes(
-		attribute.String("req_host", r.Host),
-		attribute.String("method", r.Method),
-		attribute.String("remote_addr", r.RemoteAddr),
-		attribute.String("request_uri", r.RequestURI),
-		attribute.String("auth_header", authHeader),
-		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
+	logMetric := NewLogMetric(
+		[]zap.Field{
+			zap.String("reqHost", r.Host),
+			zap.String("method", r.Method),
+			zap.String("remoteAddr", r.RemoteAddr),
+			zap.String("requestURI", r.RequestURI),
+			zap.String("authHeader", authHeader),
+			zap.String("clientIP", clientIP),
+			zap.String("traceID", span.SpanContext().TraceID().String()),
+		},
+		[]attribute.KeyValue{
+			attribute.String("reqHost", r.Host),
+			attribute.String("method", r.Method),
+			attribute.String("clientIP", clientIP),
+			attribute.String("remoteAddr", r.RemoteAddr),
+			attribute.String("requestURI", r.RequestURI),
+			attribute.String("authHeader", authHeader),
+			attribute.String("traceID", span.SpanContext().TraceID().String()),
+		},
 	)
+	span.SetAttributes(logMetric.attributes...)
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, "", err.Error(), "", "could not read getPayload", ""), s.logger, nil, s.tracer)
+		logMetric.String("proxyError", err.Error())
+		logMetric.Error(errors.New("could not read registration"))
+		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, "could not read registration"), s.logger, s.tracer, logMetric)
 		return
 	}
-	out, metaData, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
-	span.AddEvent("GetPayload")
+	span.AddEvent("getPayload")
+	out, lm, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
+	logMetric.Merge(lm)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		respondError(getPayload, w, err, s.logger, metaData, s.tracer)
+		respondError(getPayload, w, err, s.logger, s.tracer, logMetric)
 		return
 	}
-	respondOK(getPayload, w, out, s.logger, metaData, s.tracer)
+	respondOK(getPayload, w, out, s.logger, s.tracer, logMetric)
 }
-
-func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logger, metaData any, tracer trace.Tracer) {
+func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logger, tracer trace.Tracer, logMetric *LogMetric) {
 	_, span := tracer.Start(context.Background(), "respondOK-main")
 	defer span.End()
-
-	span.SetAttributes(
+	logMetric.Attributes(
 		attribute.String("method", method),
-		attribute.Int("response_code", 200),
-		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
+		attribute.Int("responseCode", 200),
+		attribute.String("traceID", span.SpanContext().TraceID().String()),
 	)
+	span.SetAttributes(logMetric.attributes...)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Error("couldn't write OK response", zap.Error(err))
-		http.Error(w, "", http.StatusInternalServerError)
 		span.SetStatus(codes.Error, "couldn't write OK response")
+		log.With(logMetric.fields...).Error("couldn't write OK response", zap.Error(err))
+		http.Error(w, "", http.StatusInternalServerError)
+
+		span.End()
 		return
 	}
-	var meta string
-	if metaData != nil {
-		meta = metaData.(string)
-	}
-	span.End()
-	log.Info(fmt.Sprintf("%s succeeded", method), zap.String("metaData", meta))
+	log.With(zap.String("method", method)).With(logMetric.fields...).Info(fmt.Sprintf("%s succeeded", method))
+
 }
 
-func respondError(method string, w http.ResponseWriter, err error, log *zap.Logger, metaData any, tracer trace.Tracer) {
+func respondError(method string, w http.ResponseWriter, err error, log *zap.Logger, tracer trace.Tracer, logMetric *LogMetric) {
+
 	_, span := tracer.Start(context.Background(), "respondError-main")
 	defer span.End()
-	span.SetAttributes(
+	logMetric.Attributes(
 		attribute.String("method", method),
 		attribute.String("err", err.Error()),
-		attribute.String("tracer_id", span.SpanContext().TraceID().String()),
+		attribute.String("traceID", span.SpanContext().TraceID().String()),
 	)
+	span.SetAttributes(logMetric.attributes...)
 
-	var meta string
-	if metaData != nil {
-		meta = metaData.(string)
-	}
 	resp, ok := err.(*ErrorResp)
+	span.SetAttributes(attribute.Int("responseCode", resp.ErrorCode()))
 	if !ok {
-		log.With(zap.String("req_id", resp.BlxrMessage.reqID),
-			zap.String("client_ip", resp.BlxrMessage.clientIP),
-			zap.String("blxr_message", resp.BlxrMessage.msg),
-			zap.String("relay_message", resp.BlxrMessage.relayMsg),
-			zap.String("proxy_message", resp.BlxrMessage.proxyMsg),
-			zap.String("resp_message", resp.Message),
-			zap.Int("resp_code", resp.Code)).Error("failed to typecast error response", zap.String("metaData", meta))
+		log.With(zap.String("method", method)).With(logMetric.fields...).Error("failed to typecast error response")
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		span.SetStatus(codes.Error, "failed to typecast error response")
 		return
 	}
-
 	w.WriteHeader(resp.Code)
-	log.With(zap.String("req_id", resp.BlxrMessage.reqID),
-		zap.String("client_ip", resp.BlxrMessage.clientIP),
-		zap.String("blxr_message", resp.BlxrMessage.msg),
-		zap.String("relay_message", resp.BlxrMessage.relayMsg),
-		zap.String("proxy_message", resp.BlxrMessage.proxyMsg),
-		zap.String("resp_message", resp.Message),
-		zap.Int("resp_code", resp.Code)).Error(fmt.Sprintf("%s failed", method), zap.String("metaData", meta))
+	log.With(zap.String("method", method)).With(logMetric.fields...).Error(fmt.Sprintf("%s failed", method))
 	if resp.Message != "" && resp.Code != http.StatusNoContent { // HTTP status "No Content" implies that no message body should be included in the response.
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			log.With(zap.String("req_id", resp.BlxrMessage.reqID),
-				zap.String("blxr_message", resp.BlxrMessage.msg),
-				zap.String("client_ip", resp.BlxrMessage.clientIP),
-				zap.String("relay_message", resp.BlxrMessage.relayMsg),
-				zap.String("proxy_message", resp.BlxrMessage.proxyMsg),
-				zap.String("resp_message", resp.Message),
-				zap.Int("resp_code", resp.Code)).Error("couldn't write error response", zap.Error(err), zap.String("metaData", meta))
-			_, _ = w.Write([]byte(``))
 			span.SetStatus(codes.Error, "couldn't write error response")
+			log.With(zap.String("method", method)).With(logMetric.fields...).Error("couldn't write error response", zap.Error(err))
+			_, _ = w.Write([]byte(``))
 			return
 		}
 	}

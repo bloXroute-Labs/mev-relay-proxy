@@ -18,32 +18,32 @@ import (
 
 type MockService struct {
 	logger                *zap.Logger
-	RegisterValidatorFunc func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, any, error)
-	GetHeaderFunc         func(ctx context.Context, clientIP, slot, parentHash, pubKey string) (any, any, error)
-	GetPayloadFunc        func(ctx context.Context, payload []byte, clientIP string) (any, any, error)
+	RegisterValidatorFunc func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, *LogMetric, error)
+	GetHeaderFunc         func(ctx context.Context, clientIP, slot, parentHash, pubKey, authHeader string) (any, *LogMetric, error)
+	GetPayloadFunc        func(ctx context.Context, payload []byte, clientIP, authHeader string) (any, *LogMetric, error)
 	NodeIDFunc            func() string
 }
 
 var _ IService = (*MockService)(nil)
 
-func (m *MockService) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authKey string) (any, any, error) {
+func (m *MockService) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, *LogMetric, error) {
 	if m.RegisterValidatorFunc != nil {
-		return m.RegisterValidatorFunc(ctx, payload, clientIP, authKey)
+		return m.RegisterValidatorFunc(ctx, payload, clientIP, authHeader)
 	}
-	return nil, nil, nil
+	return nil, new(LogMetric), nil
 }
-func (m *MockService) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, any, error) {
+func (m *MockService) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, *LogMetric, error) {
 	if m.GetHeaderFunc != nil {
-		return m.GetHeaderFunc(ctx, clientIP, slot, parentHash, pubKey)
+		return m.GetHeaderFunc(ctx, clientIP, slot, parentHash, pubKey, authHeader)
 	}
-	return nil, nil, nil
+	return nil, new(LogMetric), nil
 }
 
-func (m *MockService) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP string, authHeader string) (any, any, error) {
+func (m *MockService) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, *LogMetric, error) {
 	if m.GetPayloadFunc != nil {
-		return m.GetPayloadFunc(ctx, payload, clientIP)
+		return m.GetPayloadFunc(ctx, payload, clientIP, authHeader)
 	}
-	return nil, nil, nil
+	return nil, new(LogMetric), nil
 }
 
 func (m *MockService) NodeID() string {
@@ -64,7 +64,7 @@ func TestServer_HandleRegistration(t *testing.T) {
 			requestBody: []byte(`{"key": "value"}`),
 			mockService: &MockService{
 				logger: zap.NewNop(),
-				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, any, error) {
+				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, *LogMetric, error) {
 					return nil, nil, nil
 
 				},
@@ -76,8 +76,8 @@ func TestServer_HandleRegistration(t *testing.T) {
 			requestBody: []byte(`{"key": "value"}`),
 			mockService: &MockService{
 				logger: zap.NewNop(),
-				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, any, error) {
-					return nil, nil, toErrorResp(http.StatusInternalServerError, "", "failed to register", "", "failed to register", "")
+				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP, authKey string) (interface{}, *LogMetric, error) {
+					return nil, nil, toErrorResp(http.StatusInternalServerError, "failed to register")
 				},
 			},
 			expectedCode:  http.StatusInternalServerError,
@@ -121,7 +121,7 @@ func TestServer_HandleGetHeader(t *testing.T) {
 			pubKey:     "pk123",
 			mockService: &MockService{
 				logger: zap.NewNop(),
-				GetHeaderFunc: func(ctx context.Context, clientIP, slot, parentHash, pubKey string) (interface{}, any, error) {
+				GetHeaderFunc: func(ctx context.Context, clientIP, slot, parentHash, pubKey, authHeader string) (interface{}, *LogMetric, error) {
 
 					return "getHeader", nil, nil
 				},
@@ -135,7 +135,7 @@ func TestServer_HandleGetHeader(t *testing.T) {
 			pubKey:     "pk456",
 			mockService: &MockService{
 				logger: zap.NewNop(),
-				GetHeaderFunc: func(ctx context.Context, clientIP, slot, parentHash, pubKey string) (interface{}, any, error) {
+				GetHeaderFunc: func(ctx context.Context, clientIP, slot, parentHash, pubKey, authHeader string) (interface{}, *LogMetric, error) {
 					return nil, nil, &ErrorResp{Code: http.StatusNoContent}
 				},
 			},
@@ -148,12 +148,8 @@ func TestServer_HandleGetHeader(t *testing.T) {
 			pubKey:     "pk456",
 			mockService: &MockService{
 				logger: zap.NewNop(),
-				GetHeaderFunc: func(ctx context.Context, clientIP, slot, parentHash, pubKey string) (interface{}, any, error) {
-					return nil, nil, &ErrorResp{Code: http.StatusNoContent, Message: "header value is not present for the requested key slot", BlxrMessage: BlxrMessage{
-						reqID:    "dummy-id",
-						msg:      "header value is not present for the requested key slot",
-						clientIP: "0.0.0.0",
-					}}
+				GetHeaderFunc: func(ctx context.Context, clientIP, slot, parentHash, pubKey, authHeader string) (interface{}, *LogMetric, error) {
+					return nil, nil, &ErrorResp{Code: http.StatusNoContent, Message: "header value is not present for the requested key slot"}
 				},
 			},
 			expectedCode:   http.StatusNoContent,
@@ -195,7 +191,7 @@ func TestServer_HandleGetPayload(t *testing.T) {
 			requestBody: []byte(`{"key": "value"}`),
 			mockService: &MockService{
 				logger: zap.NewNop(),
-				GetPayloadFunc: func(ctx context.Context, payload []byte, clientIP string) (any, any, error) {
+				GetPayloadFunc: func(ctx context.Context, payload []byte, clientIP, authHeader string) (any, *LogMetric, error) {
 					return nil, nil, nil
 				},
 			},
@@ -206,8 +202,8 @@ func TestServer_HandleGetPayload(t *testing.T) {
 			requestBody: []byte(`{"key": "value"}`),
 			mockService: &MockService{
 				logger: zap.NewNop(),
-				GetPayloadFunc: func(ctx context.Context, payload []byte, clientIP string) (any, any, error) {
-					return nil, nil, toErrorResp(http.StatusInternalServerError, "", "failed to getPayload", "", "failed to getPayload", "")
+				GetPayloadFunc: func(ctx context.Context, payload []byte, clientIP, authHeader string) (any, *LogMetric, error) {
+					return nil, nil, toErrorResp(http.StatusInternalServerError, "failed to getPayload")
 				},
 			},
 			expectedCode:  http.StatusInternalServerError,
