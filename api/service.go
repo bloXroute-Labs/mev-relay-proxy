@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/patrickmn/go-cache"
 	"io"
 	"math/big"
 	"net/http"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/patrickmn/go-cache"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -497,6 +498,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 				BlockValue:               "",
 				Succeeded:                false,
 				NodeID:                   s.nodeID,
+				Slot:                     int64(_slot),
 			}
 			s.fluentD.LogToFluentD(fluentstats.Record{
 				Type: typeRelayProxyGetHeader,
@@ -522,6 +524,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			BlockValue:               new(big.Int).SetBytes(slotBestHeader.Value).String(),
 			Succeeded:                false,
 			NodeID:                   s.nodeID,
+			Slot:                     int64(_slot),
 		}
 		s.fluentD.LogToFluentD(fluentstats.Record{
 			Type: typeRelayProxyGetHeader,
@@ -713,25 +716,6 @@ func (s *Service) keyForCachingBids(slot uint64, parentHash string, proposerPubk
 	return fmt.Sprintf("%d_%s_%s", slot, strings.ToLower(parentHash), strings.ToLower(proposerPubkey))
 }
 
-func (s *Service) parseKeyForCachingBids(cacheKey string) (slot uint64, parentHash string, proposerPubkey string, err error) {
-	cacheKeyComponents := strings.Split(cacheKey, cacheKeySeparator)
-	if len(cacheKeyComponents) != 3 {
-		err = errors.New("invalid cache key format")
-		return
-	}
-
-	slot, parseError := strconv.ParseUint(cacheKeyComponents[0], 10, 64)
-	if parseError != nil {
-		err = parseError
-		return
-	}
-
-	parentHash = cacheKeyComponents[1]
-	proposerPubkey = cacheKeyComponents[2]
-
-	return
-}
-
 func (s *Service) GetTopBuilderBid(cacheKey string) (*Bid, error) {
 	var builderBidsMap *syncmap.SyncMap[string, *Bid]
 	entry, bidsMapFound := s.builderBidsForSlot.Get(cacheKey)
@@ -771,47 +755,6 @@ func (s *Service) setBuilderBidForSlot(logMetric *LogMetric, cacheKey string, bu
 		builderBidsMap = entry.(*syncmap.SyncMap[string, *Bid])
 	}
 
-	if existingBuilderBid, found := builderBidsMap.Load(builderPubkey); found {
-
-		oldBidValue := new(big.Int).SetBytes(existingBuilderBid.Value)
-		newBidValue := new(big.Int).SetBytes(bid.Value)
-		slot, parentHash, proposerPubkey, err := s.parseKeyForCachingBids(cacheKey)
-		if err != nil {
-			s.logger.With(logMetric.fields...).With(
-				zap.String("cacheKey", cacheKey),
-				zap.String("builderPubKey", builderPubkey),
-				zap.Error(err),
-			).Error("could not parse cache key")
-		}
-
-		// if this block is canceling another higher-value block from the same builder,
-		// log getHeader cancellation data to fluentd to be loaded into the generic table
-		if newBidValue.Cmp(oldBidValue) < 0 {
-			go func() {
-				stat := blockReplacedStatsRecord{
-					Slot:                   slot,
-					ParentHash:             parentHash,
-					ProposerPubkey:         proposerPubkey,
-					BuilderPubkey:          builderPubkey,
-					ReplacedBlockHash:      existingBuilderBid.BlockHash,
-					ReplacedBlockValue:     oldBidValue.String(),
-					ReplacedBlockETHValue:  WeiToEth(oldBidValue.String()),
-					ReplacedBlockExtraData: existingBuilderBid.BuilderExtraData,
-					NewBlockHash:           bid.BlockHash,
-					NewBlockValue:          newBidValue.String(),
-					NewBlockEthValue:       WeiToEth(newBidValue.String()),
-					NewBlockExtraData:      bid.BuilderExtraData,
-					ReplacementTime:        time.Now().UTC(),
-				}
-				// log the cancellation data
-				s.logger.With(logMetric.fields...).Info("replacing block for same builder", zap.Any("stat", stat))
-				s.fluentD.LogToFluentD(fluentstats.Record{
-					Data: stat,
-					Type: typeRelayProxyBidCancellation,
-				}, time.Now(), s.NodeID(), statsRelayProxyBidCancellation)
-			}()
-		}
-	}
 	builderBidsMap.Store(builderPubkey, bid)
 }
 
