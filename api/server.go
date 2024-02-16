@@ -117,8 +117,8 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 
 func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	parentSpan := trace.SpanFromContext(r.Context())
-	ctx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(ctx, "handleRegistration")
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	_, span := s.tracer.Start(parentSpanCtx, "handleRegistration")
 	defer span.End()
 
 	receivedAt := time.Now().UTC()
@@ -168,8 +168,8 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	parentSpan := trace.SpanFromContext(r.Context())
-	ctx := trace.ContextWithSpan(context.Background(), parentSpan)
-	ctx, span := s.tracer.Start(ctx, "handleGetHeader")
+	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	handleGetHeaderCtx, span := s.tracer.Start(parentSpanCtx, "handleGetHeader")
 	defer span.End()
 
 	receivedAt := time.Now().UTC()
@@ -226,7 +226,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Duration(sleep) * time.Millisecond)
 	}
 
-	_, handleGetHeaderSpan := s.tracer.Start(ctx, "server-getHeader")
+	_, handleGetHeaderSpan := s.tracer.Start(handleGetHeaderCtx, "server-getHeader")
 	out, lm, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey, authHeader)
 	handleGetHeaderSpan.End()
 	logMetric.Merge(lm)
