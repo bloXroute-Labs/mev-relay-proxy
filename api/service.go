@@ -278,11 +278,13 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	streamHeaderCtx, span := s.tracer.Start(ctx, "streamHeader")
+	streamHeaderCtx, span := s.tracer.Start(ctx, "streamHeaderFunction")
 	defer span.End()
 	id := uuid.NewString()
 	client.nodeID = fmt.Sprintf("%v-%v-%v-%v", s.nodeID, client.URL, id, time.Now().UTC().Format("15:04:05.999999999"))
 
+	childCtx, childSpan := s.tracer.Start(streamHeaderCtx, "streamHeader")
+	defer childSpan.End(trace.WithTimestamp(time.Now()))
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:       id,
 		NodeId:      client.nodeID,
@@ -342,7 +344,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			return nil, nil
 		default:
 		}
-		_, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
+		_, streamReceiveSpan := s.tracer.Start(childCtx, "streamReceive")
 		header, err := stream.Recv()
 		if err == io.EOF {
 			s.logger.With(zap.Error(err)).Warn("stream received EOF", logMetric.fields...)
@@ -384,7 +386,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			s.logger.Warn("received empty stream", logMetric.fields...)
 			continue
 		}
-		_, keyCacheSpan := s.tracer.Start(streamHeaderCtx, "keyForCachingBids")
+		_, keyCacheSpan := s.tracer.Start(childCtx, "keyForCachingBids")
 		k := s.keyForCachingBids(header.GetSlot(), header.GetParentHash(), header.GetPubkey())
 		lm := new(LogMetric)
 		lm.Fields(
@@ -410,8 +412,8 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			BuilderExtraData: header.GetBuilderExtraData(),
 		}
 		s.setBuilderBidForSlot(logMetric, k, header.GetBuilderPubkey(), bid) // run it in goroutine ?
-		keyCacheSpan.End()
-		streamReceiveSpan.End()
+		go keyCacheSpan.End(trace.WithTimestamp(time.Now()))
+		go streamReceiveSpan.End(trace.WithTimestamp(time.Now()))
 	}
 	<-done
 	s.logger.Warn("closing connection", logMetric.fields...)
