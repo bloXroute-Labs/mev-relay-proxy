@@ -123,7 +123,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		aKey = authHeader
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", aKey)
-	registerValidaorCtx, span := s.tracer.Start(ctx, "registerValidator")
+	ctx, span := s.tracer.Start(ctx, "registerValidator")
 	defer span.End()
 
 	id := uuid.NewString()
@@ -148,7 +148,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	s.logger.Info("received", logMetric.fields...)
 
 	// decode auth header
-	_, decodeAuthSpan := s.tracer.Start(registerValidaorCtx, "decodeAuth")
+	_, decodeAuthSpan := s.tracer.Start(ctx, "decodeAuth")
 	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
 		logMetric.String("proxyError", fmt.Sprintf("failed to decode auth header %s", authHeader))
@@ -161,10 +161,10 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	logMetric.String("accountID", accountID)
 	span.SetAttributes(logMetric.attributes...)
 	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
-	_, spanWaitForResponse := s.tracer.Start(registerValidaorCtx, "waitForResponse")
+	_, spanWaitForResponse := s.tracer.Start(ctx, "waitForResponse")
 	for _, registrationClient := range s.registrationClients {
 		go func(c *Client) {
-			_, regSpan := s.tracer.Start(registerValidaorCtx, "registerValidatorForClient")
+			_, regSpan := s.tracer.Start(ctx, "registerValidatorForClient")
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
 
@@ -206,7 +206,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	}
 	go spanWaitForResponse.End(trace.WithTimestamp(time.Now()))
 
-	_, spanWaitForSuccessfulResponse := s.tracer.Start(registerValidaorCtx, "waitForSuccessfulResponse")
+	_, spanWaitForSuccessfulResponse := s.tracer.Start(ctx, "waitForSuccessfulResponse")
 	// Wait for the first successful response or until all responses are processed
 	for i := 0; i < len(s.registrationClients); i++ {
 		select {
@@ -280,7 +280,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	streamHeaderCtx, span := s.tracer.Start(ctx, "streamHeaderFunction")
+	ctx, span := s.tracer.Start(ctx, "streamHeaderFunction")
 	defer span.End()
 	id := uuid.NewString()
 	client.nodeID = fmt.Sprintf("%v-%v-%v-%v", s.nodeID, client.URL, id, time.Now().UTC().Format("15:04:05.999999999"))
@@ -338,7 +338,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		}
 	}(*logMetric)
 
-	streamReceiveCtx, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
+	ctx, streamReceiveSpan := s.tracer.Start(ctx, "streamReceive")
 	defer streamReceiveSpan.End()
 
 	for {
@@ -404,7 +404,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		lm.Merge(logMetric)
 		s.logger.Info("received header", lm.fields...)
 
-		_, storeBidsSpan := s.tracer.Start(streamReceiveCtx, "storeBids")
+		_, storeBidsSpan := s.tracer.Start(ctx, "storeBids")
 		// store the bid for builder pubkey
 		bid := &Bid{
 			Value:            header.GetValue(),
@@ -424,7 +424,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, *LogMetric, error) {
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
-	getHeaderctx, span := s.tracer.Start(ctx, "getHeader")
+	ctx, span := s.tracer.Start(ctx, "getHeader")
 	defer span.End()
 	startTime := time.Now().UTC()
 
@@ -476,7 +476,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 	span.SetAttributes(logMetric.attributes...)
 
-	_, storingHeaderSpan := s.tracer.Start(getHeaderctx, "storingHeader")
+	_, storingHeaderSpan := s.tracer.Start(ctx, "storingHeader")
 
 	//TODO: send fluentd stats for StatusNoContent error cases
 
@@ -560,7 +560,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		aKey = authHeader
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", aKey)
-	payloadCtx, span := s.tracer.Start(ctx, getPayload)
+	ctx, span := s.tracer.Start(ctx, getPayload)
 	defer span.End()
 
 	logMetric := NewLogMetric(
@@ -610,14 +610,14 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		respChan = make(chan *relaygrpc.GetPayloadResponse, len(s.clients))
 		_err     *ErrorResp
 	)
-	payloadResponseCtx, payloadResponseSpan := s.tracer.Start(payloadCtx, "payloadResponseFromRelay")
 	for _, client := range s.clients {
 		go func(c *Client) {
+			ctx, clientGetPayloadSpan := s.tracer.Start(ctx, "getPayloadForClient")
+			defer clientGetPayloadSpan.End()
 			clientCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
-			_, clientGetPayloadSpan := s.tracer.Start(payloadResponseCtx, "Client-getPayloadFromRelay")
+
 			out, err := c.GetPayload(clientCtx, req)
-			clientGetPayloadSpan.End(trace.WithTimestamp(time.Now()))
 			if err != nil {
 				span.SetStatus(otelcodes.Error, err.Error())
 				errChan <- toErrorResp(http.StatusInternalServerError, "relay returned error", zap.String("relayError", err.Error()), zap.String("url", c.URL))
@@ -728,7 +728,6 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			return json.RawMessage(out.GetVersionedExecutionPayload()), logMetric, nil
 		}
 	}
-	go payloadResponseSpan.End(trace.WithTimestamp(time.Now()))
 	logMetric.Error(errors.New(_err.Message))
 	logMetric.Fields(_err.fields...)
 	return nil, nil, _err
