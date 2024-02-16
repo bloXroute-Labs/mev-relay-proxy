@@ -71,19 +71,19 @@ func TestService_RegisterValidator(t *testing.T) {
 			f: func(ctx context.Context, req *relaygrpc.RegisterValidatorRequest, opts ...grpc.CallOption) (*relaygrpc.RegisterValidatorResponse, error) {
 				return nil, fmt.Errorf("error")
 			},
-			wantErr: toErrorResp(http.StatusInternalServerError, "error", "", "", "relay returned error", ""),
+			wantErr: toErrorResp(http.StatusInternalServerError, "relay returned error"),
 		},
 		"If registerValidator returns empty output": {
 			f: func(ctx context.Context, req *relaygrpc.RegisterValidatorRequest, opts ...grpc.CallOption) (*relaygrpc.RegisterValidatorResponse, error) {
 				return nil, nil
 			},
-			wantErr: toErrorResp(http.StatusInternalServerError, "", "failed to register", "", "empty response from relay", ""),
+			wantErr: toErrorResp(http.StatusInternalServerError, "empty response from relay"),
 		},
 		"If registerValidator returns error output": {
 			f: func(ctx context.Context, req *relaygrpc.RegisterValidatorRequest, opts ...grpc.CallOption) (*relaygrpc.RegisterValidatorResponse, error) {
 				return &relaygrpc.RegisterValidatorResponse{Code: 2, Message: "failed"}, nil
 			},
-			wantErr: toErrorResp(http.StatusInternalServerError, "", "failed", "", "relay returned failure response code", ""),
+			wantErr: toErrorResp(http.StatusInternalServerError, "relay returned failure response code"),
 		},
 	}
 	for testName, tt := range tests {
@@ -170,19 +170,19 @@ func TestService_getPayload(t *testing.T) {
 			f: func(ctx context.Context, req *relaygrpc.GetPayloadRequest, opts ...grpc.CallOption) (*relaygrpc.GetPayloadResponse, error) {
 				return nil, fmt.Errorf("error")
 			},
-			wantErr: toErrorResp(http.StatusInternalServerError, "error", "", "", "relay returned error", ""),
+			wantErr: toErrorResp(http.StatusInternalServerError, "relay returned error"),
 		},
 		"If getPayload returns empty output": {
 			f: func(ctx context.Context, req *relaygrpc.GetPayloadRequest, opts ...grpc.CallOption) (*relaygrpc.GetPayloadResponse, error) {
 				return nil, nil
 			},
-			wantErr: toErrorResp(http.StatusInternalServerError, "", "failed to getPayload", "", "empty response from relay", ""),
+			wantErr: toErrorResp(http.StatusInternalServerError, "empty response from relay"),
 		},
 		"If getPayload returns error output": {
 			f: func(ctx context.Context, req *relaygrpc.GetPayloadRequest, opts ...grpc.CallOption) (*relaygrpc.GetPayloadResponse, error) {
 				return &relaygrpc.GetPayloadResponse{Code: 2, Message: "failed"}, nil
 			},
-			wantErr: toErrorResp(http.StatusInternalServerError, "", "failed", "", "relay returned failure response code", ""),
+			wantErr: toErrorResp(http.StatusInternalServerError, "relay returned failure response code"),
 		},
 	}
 	for testName, tt := range tests {
