@@ -150,13 +150,14 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	// decode auth header
 	_, decodeAuthSpan := s.tracer.Start(registerValidaorCtx, "decodeAuth")
 	accountID, _, err := DecodeAuth(authHeader)
-	decodeAuthSpan.End()
 	if err != nil {
 		logMetric.String("proxyError", fmt.Sprintf("failed to decode auth header %s", authHeader))
 		logMetric.Error(err)
 		s.logger.Warn("failed to decode auth header", logMetric.fields...)
 		//zap.Error(err), 		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
 	}
+	go decodeAuthSpan.End(trace.WithTimestamp(time.Now()))
+
 	logMetric.String("accountID", accountID)
 	span.SetAttributes(logMetric.attributes...)
 	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
@@ -218,7 +219,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			return struct{}{}, logMetric, nil
 		}
 	}
-	spanWaitForResponse.End()
+	go spanWaitForResponse.End(trace.WithTimestamp(time.Now()))
 	logMetric.Error(errors.New(_err.Message))
 	logMetric.Fields(_err.fields...)
 	return nil, logMetric, _err
@@ -386,7 +387,6 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			s.logger.Warn("received empty stream", logMetric.fields...)
 			continue
 		}
-		_, keyCacheSpan := s.tracer.Start(childCtx, "keyForCachingBids")
 		k := s.keyForCachingBids(header.GetSlot(), header.GetParentHash(), header.GetPubkey())
 		lm := new(LogMetric)
 		lm.Fields(
@@ -403,6 +403,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		lm.Merge(logMetric)
 		s.logger.Info("received header", lm.fields...)
 
+		_, storeBidsSpan := s.tracer.Start(childCtx, "storeBids")
 		// store the bid for builder pubkey
 		bid := &Bid{
 			Value:            header.GetValue(),
@@ -412,7 +413,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			BuilderExtraData: header.GetBuilderExtraData(),
 		}
 		s.setBuilderBidForSlot(logMetric, k, header.GetBuilderPubkey(), bid) // run it in goroutine ?
-		go keyCacheSpan.End(trace.WithTimestamp(time.Now()))
+		go storeBidsSpan.End(trace.WithTimestamp(time.Now()))
 		go streamReceiveSpan.End(trace.WithTimestamp(time.Now()))
 	}
 	<-done
