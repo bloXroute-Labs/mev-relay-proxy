@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/bloXroute-Labs/mev-relay-proxy/api"
+	"github.com/bloXroute-Labs/mev-relay-proxy/common"
 	"os"
 	"os/signal"
 	"strings"
@@ -34,6 +35,7 @@ var (
 	_SecretToken  string
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
+	defaultNetwork    = common.EthNetworkMainnet
 
 	listenAddr = flag.String("addr", defaultListenAddr, "mev-relay-proxy server listening address")
 	//lint:ignore U1000 Ignore unused variable
@@ -48,6 +50,7 @@ var (
 	// fluentD
 	fluentDHostFlag   = flag.String("fluentd-host", "", "fluentd host")
 	beaconGenesisTime = flag.Int64("beacon-genesis-time", 1606824023, "beacon genesis time in unix timestamp, default value set to mainnet")
+	network           = flag.String("network", defaultNetwork, "which network to use")
 )
 
 func main() {
@@ -128,8 +131,13 @@ func main() {
 	// init fluentD if enabled
 	fluentLogger := fluentstats.NewStats(true, *fluentDHostFlag)
 
+	ethNetworks, err := common.NewEthNetworkDetails(*network)
+	if err != nil {
+		l.Fatal("failed to create eth network", zap.Error(err))
+	}
+
 	// init service and server
-	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, *beaconGenesisTime, fluentLogger, newClients, newRegistrationClients...)
+	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, *beaconGenesisTime, ethNetworks, fluentLogger, newClients, newRegistrationClients...)
 	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, *getHeaderMaxDelayInMS, *beaconGenesisTime, tracer, fluentLogger)
 
 	exit := make(chan struct{})
@@ -144,6 +152,8 @@ func main() {
 		close(exit)
 	}()
 
+	// start listening for payload prefetch event
+	go svc.StartPreFetcher(ctx)
 	// start streaming headers
 	go func(_ctx context.Context) {
 		wg := new(sync.WaitGroup)

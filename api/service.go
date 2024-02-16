@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/bloXroute-Labs/mev-relay-proxy/common"
+	"github.com/bloXroute-Labs/mev-relay-proxy/fastjson"
 	"io"
 	"math/big"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,15 +33,21 @@ import (
 	"github.com/bloXroute-Labs/gateway/v2/utils/syncmap"
 	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	relaygrpc "github.com/bloXroute-Labs/relay-grpc"
+	"github.com/flashbots/go-boost-utils/utils"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 const (
-	requestTimeout = 30 * time.Second
+	regRequestTimeout        = 30 * time.Second
+	preFetcherRequestTimeout = 3 * time.Second
+
 	// cache
-	builderBidsCleanupInterval = 60 * time.Second // 5 slots
-	cacheKeySeparator          = "_"
+	builderBidsCleanupInterval      = 60 * time.Second // 5 slots
+	executionPayloadCleanupInterval = 60 * time.Second // 5 slots
+	cacheKeySeparator               = "_"
+	preFetchPayloadChanBufSize      = 100
+	getPayloadRequestCutoffMs       = 4000
 )
 
 var (
@@ -62,12 +71,14 @@ type Service struct {
 	authKey     string
 	secretToken string
 
-	tracer  trace.Tracer
-	fluentD fluentstats.Stats
+	tracer                  trace.Tracer
+	fluentD                 fluentstats.Stats
+	builderBidsForSlot      *cache.Cache
+	executionPayloadForSlot *cache.Cache
+	preFetchPayloadChan     chan preFetcherFields
 
-	bids               *syncmap.SyncMap[string, []*Bid]
-	builderBidsForSlot *cache.Cache
-	beaconGenesisTime  int64
+	beaconGenesisTime int64
+	ethNetworkDetails *common.EthNetworkDetails
 
 	clients                       []*Client
 	registrationClients           []*Client
@@ -90,16 +101,27 @@ type Bid struct {
 	BuilderExtraData string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, beaconGenesisTime int64, fluentD fluentstats.Stats, clients []*Client, registrationClients ...*Client) *Service {
+type preFetcherFields struct {
+	clientIP   string
+	authHeader string
+	slot       uint64
+	parentHash string
+	blockHash  string
+	pubKey     string
+}
+
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, beaconGenesisTime int64, ethNetworkDetails *common.EthNetworkDetails, fluentD fluentstats.Stats, clients []*Client, registrationClients ...*Client) *Service {
 	return &Service{
 		logger:                        logger,
 		version:                       version,
 		nodeID:                        nodeID,
 		authKey:                       authKey,
 		secretToken:                   secretToken,
-		bids:                          syncmap.NewStringMapOf[[]*Bid](),
 		builderBidsForSlot:            cache.New(builderBidsCleanupInterval, builderBidsCleanupInterval),
+		executionPayloadForSlot:       cache.New(executionPayloadCleanupInterval, executionPayloadCleanupInterval),
+		preFetchPayloadChan:           make(chan preFetcherFields, preFetchPayloadChanBufSize),
 		beaconGenesisTime:             beaconGenesisTime,
+		ethNetworkDetails:             ethNetworkDetails,
 		clients:                       clients,
 		registrationClients:           registrationClients,
 		registrationRelayMutex:        sync.Mutex{},
@@ -163,7 +185,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	for _, registrationClient := range s.registrationClients {
 		go func(c *Client, _ctx context.Context) {
 			_ctx, regSpan := s.tracer.Start(_ctx, "registerValidatorForClient")
-			clientCtx, cancel := context.WithTimeout(_ctx, requestTimeout)
+			clientCtx, cancel := context.WithTimeout(_ctx, regRequestTimeout)
 			defer cancel()
 
 			s.registrationRelayMutex.Lock()
@@ -415,7 +437,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			BuilderPubkey:    header.GetBuilderPubkey(),
 			BuilderExtraData: header.GetBuilderExtraData(),
 		}
-		s.setBuilderBidForSlot(logMetric, k, header.GetBuilderPubkey(), bid) // run it in goroutine ?
+		s.setBuilderBidForSlot(k, header.GetBuilderPubkey(), bid) // run it in goroutine ?
 		storeBidsSpan.End(trace.WithTimestamp(time.Now()))
 	}
 	<-done
@@ -558,7 +580,240 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		}, time.Now().UTC(), s.NodeID(), statsRelayProxyGetHeader)
 	}()
 
+	// send in payload pre fetcher event
+	s.preFetchPayloadChan <- preFetcherFields{
+		clientIP:   clientIP,
+		authHeader: authHeader,
+		slot:       _slot,
+		parentHash: parentHash,
+		blockHash:  slotBestHeader.BlockHash,
+		pubKey:     pubKey,
+	}
+
 	return json.RawMessage(slotBestHeader.Payload), logMetric, nil
+}
+
+func (s *Service) StartPreFetcher(ctx context.Context) {
+	for fields := range s.preFetchPayloadChan {
+		go func(f preFetcherFields) {
+			_ctx, cancel := context.WithTimeout(ctx, preFetcherRequestTimeout)
+			defer cancel()
+			s.PreFetchGetPayload(_ctx, f.clientIP, f.authHeader, f.slot, f.parentHash, f.blockHash, f.pubKey)
+		}(fields)
+	}
+}
+
+func (s *Service) PreFetchGetPayload(ctx context.Context, clientIP, authHeader string, slot uint64, parentHash, blockHash, pubKey string) {
+	startTime := time.Now().UTC()
+	id := uuid.NewString()
+	parentSpan := trace.SpanFromContext(ctx)
+	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	_, span := s.tracer.Start(ctx, getPayload)
+	defer span.End()
+
+	logMetric := NewLogMetric(
+		[]zap.Field{
+			zap.String("method", getPayload),
+			zap.Time("receivedAt", time.Now().UTC()),
+			zap.String("clientIP", clientIP),
+			zap.String("reqID", id),
+			zap.String("traceID", parentSpan.SpanContext().TraceID().String()),
+			zap.String("secretToken", s.secretToken),
+			zap.String("authHeader", authHeader),
+		},
+		[]attribute.KeyValue{
+			attribute.String("method", getPayload),
+			attribute.String("clientIP", clientIP),
+			attribute.String("reqID", id),
+			attribute.Int64("receivedAt", time.Now().UTC().Unix()),
+			attribute.String("traceID", parentSpan.SpanContext().TraceID().String()),
+			attribute.String("authHeader", authHeader),
+			attribute.String("secretToken", s.secretToken),
+		},
+	)
+	s.logger.Info("received", logMetric.fields...)
+	span.SetAttributes(logMetric.attributes...)
+	req := &relaygrpc.PreFetchGetPayloadRequest{
+		ReqId:       id,
+		Version:     s.version,
+		SecretToken: s.secretToken,
+		Slot:        slot,
+		ParentHash:  parentHash,
+		BlockHash:   blockHash,
+		Pubkey:      pubKey,
+		ClientIp:    clientIP,
+		ReceivedAt:  timestamppb.New(startTime),
+	}
+	var (
+		errChan  = make(chan *ErrorResp, len(s.clients))
+		respChan = make(chan *relaygrpc.PreFetchGetPayloadResponse, len(s.clients))
+		_err     *ErrorResp
+	)
+	for _, client := range s.clients {
+		go func(c *Client) {
+			clientCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+
+			out, err := c.PreFetchGetPayload(clientCtx, req)
+			if err != nil {
+				span.SetStatus(otelcodes.Error, err.Error())
+				errChan <- toErrorResp(http.StatusInternalServerError, "relay returned error", zap.String("relayError", err.Error()), zap.String("url", c.URL))
+				return
+			}
+			if out == nil {
+				span.SetStatus(otelcodes.Error, "empty response from relay")
+				errChan <- toErrorResp(http.StatusInternalServerError, "empty response from relay", zap.String("url", c.URL))
+				return
+			}
+			if out.Code != uint32(codes.OK) {
+				span.SetStatus(otelcodes.Error, out.Message)
+				errChan <- toErrorResp(http.StatusBadRequest, "relay returned failure response code", zap.String("relayError", out.Message), zap.String("url", c.URL))
+				return
+			}
+			respChan <- out
+		}(client)
+	}
+	// Wait for the first successful response or until all responses are processed
+	for i := 0; i < len(s.clients); i++ {
+		select {
+		case <-ctx.Done():
+			logMetric.Error(ctx.Err())
+			s.logger.With(logMetric.fields...).Error("context done")
+		case _err = <-errChan:
+			// if multiple client return errors, first error gets replaced by the subsequent errors
+		case out := <-respChan:
+			k := s.keyForCachingPayload(slot, parentHash, blockHash, pubKey)
+			s.executionPayloadForSlot.Set(fmt.Sprintf("%d", slot), pubKey, cache.DefaultExpiration) // store pubkey for a slot
+			if err := s.executionPayloadForSlot.Add(k, out.VersionedExecutionPayload, cache.DefaultExpiration); err != nil {
+				s.logger.Warn("cache execution payload", zap.Error(err))
+				return
+			}
+			s.logger.With(logMetric.fields...).Info("preFetchGetPayload succeeded")
+			return
+		}
+	}
+	logMetric.Error(errors.New(_err.Message))
+	logMetric.Fields(_err.fields...)
+	s.logger.With(logMetric.fields...).Error("failed to pre fetch getPayload")
+}
+
+func (s *Service) validateGetPayload(ctx context.Context, logMetric *LogMetric, payload []byte) (*VersionedPayloadInfo, error) {
+	_, readPayload := s.tracer.Start(ctx, "readPayload")
+
+	bodyString := string(payload)
+	blockHashIndex := strings.LastIndex(bodyString, "\"block_hash\"")
+
+	if blockHashIndex == -1 {
+		logMetric.String("proxyError", "block_hash not present")
+		return nil, toErrorResp(http.StatusBadRequest, "invalid input", logMetric.fields...)
+	}
+	defer readPayload.End(trace.WithTimestamp(time.Now()))
+
+	_, decodeJSONSpan := s.tracer.Start(ctx, "decodeJSON")
+	signedBlindedBeaconBlock, err := fastjson.UnmarshalToSignedBlindedBeaconBlock(bodyString)
+	if err != nil {
+		defer decodeJSONSpan.End(trace.WithTimestamp(time.Now()))
+		logMetric.String("proxyError", "failed to decode request payload")
+		return nil, toErrorResp(http.StatusBadRequest, err.Error(), logMetric.fields...)
+	}
+	defer decodeJSONSpan.End(trace.WithTimestamp(time.Now()))
+
+	logMetric.String("blockVersion", signedBlindedBeaconBlock.Version.String())
+	slot, err := signedBlindedBeaconBlock.Slot()
+	if err != nil {
+		return nil, toErrorResp(http.StatusBadRequest, "failed to get slot", logMetric.fields...)
+	}
+
+	blockHash, err := signedBlindedBeaconBlock.ExecutionBlockHash()
+	if err != nil {
+		return nil, toErrorResp(http.StatusBadRequest, "failed to get block hash", logMetric.fields...)
+	}
+	blockHashString := blockHash.String()
+
+	parentHash, err := signedBlindedBeaconBlock.ExecutionParentHash()
+	if err != nil {
+		return nil, toErrorResp(http.StatusBadRequest, "failed to get parent hash", logMetric.fields...)
+	}
+
+	proposerIndex, err := signedBlindedBeaconBlock.ProposerIndex() // how to get pubkey by index
+	if err != nil {
+		return nil, toErrorResp(http.StatusBadRequest, "failed to get proposer index", logMetric.fields...)
+	}
+	fmt.Println(proposerIndex) // TODO: remove this
+
+	_, checkRequestTimingSpan := s.tracer.Start(ctx, "checkRequestTiming")
+
+	slotStartTime := GetSlotStartTime(s.beaconGenesisTime, int64(slot))
+	msIntoSlot := time.Since(slotStartTime).Milliseconds()
+	logMetric.Attributes(
+		attribute.String("slot", fmt.Sprintf("%+v", slot)),
+		attribute.String("blockHash", blockHashString),
+	)
+
+	logMetric.Fields(
+		zap.Uint64("slot", uint64(slot)),
+		zap.String("blockHash", blockHashString),
+		zap.String("parentHash", parentHash.String()),
+		zap.Int64("msIntoSlot", msIntoSlot))
+	if msIntoSlot < 0 {
+		// Wait until slot start (t=0) if still in the future
+		_msSinceSlotStart := time.Now().UTC().UnixMilli() - slotStartTime.UnixMilli()
+		if _msSinceSlotStart < 0 {
+			delayMillis := (_msSinceSlotStart * -1) + int64(rand.Intn(50)) //nolint:gosec
+			logMetric.Int64("delayMillis", delayMillis)
+			time.Sleep(time.Duration(delayMillis) * time.Millisecond)
+			logMetric.Attributes(attribute.KeyValue{Key: "sleepingFor", Value: attribute.Int64Value(delayMillis)})
+		}
+	} else if getPayloadRequestCutoffMs > 0 && msIntoSlot > int64(getPayloadRequestCutoffMs) {
+		defer checkRequestTimingSpan.End(trace.WithTimestamp(time.Now()))
+		return nil, toErrorResp(http.StatusBadRequest, "timestamp too late", logMetric.fields...)
+	}
+	defer checkRequestTimingSpan.End(trace.WithTimestamp(time.Now()))
+
+	_, checkValidatorKnownSpan := s.tracer.Start(ctx, "checkValidatorKnown")
+	proposerKey, ok := s.executionPayloadForSlot.Get(fmt.Sprintf("%d", uint64(slot)))
+	if !ok {
+		return nil, toErrorResp(http.StatusBadRequest, fmt.Sprintf("slot %v not found in memory", slot), logMetric.fields...)
+	}
+	pubKey, ok := proposerKey.(string)
+	if !ok {
+		return nil, toErrorResp(http.StatusBadRequest, fmt.Sprintf("invalid pubkey %v stored in slot %v ", proposerKey, slot), logMetric.fields...)
+	}
+	pub, err := utils.HexToPubkey(pubKey)
+	if err != nil {
+		defer checkValidatorKnownSpan.End(trace.WithTimestamp(time.Now()))
+		return nil, toErrorResp(http.StatusBadRequest, "invalid public key", logMetric.fields...)
+	}
+
+	defer checkValidatorKnownSpan.End(trace.WithTimestamp(time.Now()))
+	logMetric.String("pubKey", pub.String())
+
+	_, verifySignatureSpan := s.tracer.Start(ctx, "verifySignature")
+	// verify the signature
+	ok, err = fastjson.CheckProposerSignature(s.ethNetworkDetails, signedBlindedBeaconBlock, pub[:])
+	if !ok || err != nil {
+		defer verifySignatureSpan.End(trace.WithTimestamp(time.Now()))
+		if err != nil {
+			logMetric.Error(err)
+		}
+		return nil, toErrorResp(http.StatusBadRequest, "invalid signature", logMetric.fields...)
+	}
+	defer verifySignatureSpan.End(trace.WithTimestamp(time.Now()))
+	return &VersionedPayloadInfo{
+		Payload: signedBlindedBeaconBlock,
+		Slot:    uint64(slot),
+
+		BlockHash: blockHashString,
+	}, nil
+}
+
+type VersionedPayloadInfo struct {
+	Payload    *common.VersionedSignedBlindedBeaconBlock
+	Slot       uint64
+	ParentHash string
+	BlockHash  string
+	PubKey     string
 }
 
 func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error) {
@@ -609,9 +864,20 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		return nil, logMetric, toErrorResp(http.StatusUnauthorized, err.Error(), logMetric.fields...)
 	}
 
+	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
 	logMetric.String("accountID", accountID)
 
-	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
+	// TODO: check in-memory for payload
+	payloadInfo, err := s.validateGetPayload(ctx, logMetric, payload)
+	if err != nil {
+		return nil, logMetric, err
+	}
+	k := s.keyForCachingPayload(payloadInfo.Slot, payloadInfo.ParentHash, payloadInfo.BlockHash, payloadInfo.PubKey)
+	v, ok := s.executionPayloadForSlot.Get(k)
+	if ok {
+		payloadResponse := v.([]byte)
+		return json.RawMessage(payloadResponse), logMetric, nil
+	}
 
 	req := &relaygrpc.GetPayloadRequest{
 		ReqId:       id,
@@ -759,6 +1025,10 @@ func (s *Service) keyForCachingBids(slot uint64, parentHash string, proposerPubk
 	return fmt.Sprintf("%d_%s_%s", slot, strings.ToLower(parentHash), strings.ToLower(proposerPubkey))
 }
 
+func (s *Service) keyForCachingPayload(slot uint64, parentHash, blockHash, proposerPubkey string) string {
+	return fmt.Sprintf("%d_%s_%s_%s", slot, strings.ToLower(parentHash), strings.ToLower(blockHash), strings.ToLower(proposerPubkey))
+}
+
 func (s *Service) GetTopBuilderBid(cacheKey string) (*Bid, error) {
 	var builderBidsMap *syncmap.SyncMap[string, *Bid]
 	entry, bidsMapFound := s.builderBidsForSlot.Get(cacheKey)
@@ -786,7 +1056,7 @@ func (s *Service) GetTopBuilderBid(cacheKey string) (*Bid, error) {
 	return topBid, nil
 }
 
-func (s *Service) setBuilderBidForSlot(logMetric *LogMetric, cacheKey string, builderPubkey string, bid *Bid) {
+func (s *Service) setBuilderBidForSlot(cacheKey string, builderPubkey string, bid *Bid) {
 	var builderBidsMap *syncmap.SyncMap[string, *Bid]
 
 	// if the cache key does not exist, create a new syncmap and store it in the cache

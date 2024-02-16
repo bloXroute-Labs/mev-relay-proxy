@@ -152,60 +152,9 @@ func TestService_GetHeader(t *testing.T) {
 	}
 }
 
-func TestService_getPayload(t *testing.T) {
-
-	tests := map[string]struct {
-		f           func(ctx context.Context, req *relaygrpc.GetPayloadRequest, opts ...grpc.CallOption) (*relaygrpc.GetPayloadResponse, error)
-		wantSuccess []byte
-		wantErr     *ErrorResp
-	}{
-		"If getPayload succeeded ": {
-			f: func(ctx context.Context, req *relaygrpc.GetPayloadRequest, opts ...grpc.CallOption) (*relaygrpc.GetPayloadResponse, error) {
-				return &relaygrpc.GetPayloadResponse{Code: 0, Message: "success", VersionedExecutionPayload: []byte(`payload`)}, nil
-			},
-			wantSuccess: []byte(`payload`),
-			wantErr:     nil,
-		},
-		"If getPayload returns error": {
-			f: func(ctx context.Context, req *relaygrpc.GetPayloadRequest, opts ...grpc.CallOption) (*relaygrpc.GetPayloadResponse, error) {
-				return nil, fmt.Errorf("error")
-			},
-			wantErr: toErrorResp(http.StatusInternalServerError, "relay returned error"),
-		},
-		"If getPayload returns empty output": {
-			f: func(ctx context.Context, req *relaygrpc.GetPayloadRequest, opts ...grpc.CallOption) (*relaygrpc.GetPayloadResponse, error) {
-				return nil, nil
-			},
-			wantErr: toErrorResp(http.StatusInternalServerError, "empty response from relay"),
-		},
-		"If getPayload returns error output": {
-			f: func(ctx context.Context, req *relaygrpc.GetPayloadRequest, opts ...grpc.CallOption) (*relaygrpc.GetPayloadResponse, error) {
-				return &relaygrpc.GetPayloadResponse{Code: 2, Message: "failed"}, nil
-			},
-			wantErr: toErrorResp(http.StatusInternalServerError, "relay returned failure response code"),
-		},
-	}
-	for testName, tt := range tests {
-		t.Run(testName, func(t *testing.T) {
-			s := &Service{
-				logger:  zap.NewNop(),
-				clients: []*Client{{RelayClient: &mockRelayClient{GetPayloadFunc: tt.f}}},
-				tracer:  noop.NewTracerProvider().Tracer("test"),
-				fluentD: fluentstats.NewStats(true, "0.0.0.0:24224"),
-			}
-			got, _, err := s.GetPayload(context.Background(), time.Now(), nil, "", TestAuthHeader, "")
-			if err == nil {
-				assert.Equal(t, string(got.(json.RawMessage)), string(tt.wantSuccess))
-				return
-			}
-			assert.Equal(t, err.Error(), tt.wantErr.Error())
-		})
-	}
-}
 func TestBlockCancellation(t *testing.T) {
 	s := &Service{
 		logger:             zap.NewNop(),
-		bids:               syncmap.NewStringMapOf[[]*Bid](),
 		builderBidsForSlot: cache.New(builderBidsCleanupInterval, builderBidsCleanupInterval),
 	}
 
@@ -260,7 +209,6 @@ func TestBlockCancellation(t *testing.T) {
 func TestBlockCancellationForSamePubKey(t *testing.T) {
 	s := &Service{
 		logger:             zap.NewNop(),
-		bids:               syncmap.NewStringMapOf[[]*Bid](),
 		builderBidsForSlot: cache.New(builderBidsCleanupInterval, builderBidsCleanupInterval),
 	}
 
@@ -412,7 +360,7 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 	registrationClient := &Client{lis.Addr().String(), "", conn, relayClient}
 	registrationClients := []*Client{registrationClient}
 
-	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "dummy-token", 0, fluent, clients, registrationClients...)
+	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "dummy-token", 0, nil, fluent, clients, registrationClients...)
 
 	go func() {
 		if _, err := service.StreamHeader(ctx, c); err != nil {
