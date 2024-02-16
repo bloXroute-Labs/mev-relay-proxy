@@ -339,13 +339,14 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			closeDone()
 		}
 	}(*logMetric)
+	_, streamReceiveSpan := s.tracer.Start(childCtx, "streamReceive")
+
 	for {
 		select {
 		case <-done:
 			return nil, nil
 		default:
 		}
-		_, streamReceiveSpan := s.tracer.Start(childCtx, "streamReceive")
 		header, err := stream.Recv()
 		if err == io.EOF {
 			s.logger.With(zap.Error(err)).Warn("stream received EOF", logMetric.fields...)
@@ -414,9 +415,10 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		}
 		s.setBuilderBidForSlot(logMetric, k, header.GetBuilderPubkey(), bid) // run it in goroutine ?
 		go storeBidsSpan.End(trace.WithTimestamp(time.Now()))
-		go streamReceiveSpan.End(trace.WithTimestamp(time.Now()))
 	}
 	<-done
+	go streamReceiveSpan.End(trace.WithTimestamp(time.Now()))
+
 	s.logger.Warn("closing connection", logMetric.fields...)
 	return nil, nil
 }
