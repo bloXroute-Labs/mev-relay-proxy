@@ -118,7 +118,7 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	parentSpan := trace.SpanFromContext(r.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(parentSpanCtx, "handleRegistration")
+	regCtx, span := s.tracer.Start(parentSpanCtx, "handleRegistration")
 	defer span.End()
 
 	receivedAt := time.Now().UTC()
@@ -146,7 +146,9 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	span.SetAttributes(logMetric.attributes...)
+	_, reqyestBoydySpan := s.tracer.Start(regCtx, "registration-request-body-read")
 	bodyBytes, err := io.ReadAll(r.Body)
+	reqyestBoydySpan.End()
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		logMetric.String("proxyError", err.Error())
@@ -155,7 +157,9 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, registrationSpan := s.tracer.Start(regCtx, "registration")
 	out, lm, err := s.svc.RegisterValidator(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
+	registrationSpan.End()
 	logMetric.Merge(lm)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
@@ -169,7 +173,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	parentSpan := trace.SpanFromContext(r.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(parentSpanCtx, "handleGetHeader")
+	handleGetHeaderCtx, span := s.tracer.Start(parentSpanCtx, "handleGetHeader")
 	defer span.End()
 
 	receivedAt := time.Now().UTC()
@@ -226,8 +230,9 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Duration(sleep) * time.Millisecond)
 	}
 
-	span.AddEvent("getHeader")
+	_, handleGetHeaderSpan := s.tracer.Start(handleGetHeaderCtx, "server-getHeader")
 	out, lm, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey, authHeader)
+	handleGetHeaderSpan.End()
 	logMetric.Merge(lm)
 	if err != nil {
 		respondError(getHeader, w, err, s.logger, s.tracer, logMetric)
