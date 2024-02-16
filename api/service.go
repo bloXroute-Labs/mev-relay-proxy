@@ -342,7 +342,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			return nil, nil
 		default:
 		}
-		streamReceiveCtx, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
+		_, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
 		header, err := stream.Recv()
 		if err == io.EOF {
 			s.logger.With(zap.Error(err)).Warn("stream received EOF", logMetric.fields...)
@@ -384,7 +384,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			s.logger.Warn("received empty stream", logMetric.fields...)
 			continue
 		}
-		_, keyCacheSpan := s.tracer.Start(streamReceiveCtx, "keyForCachingBids")
+		_, keyCacheSpan := s.tracer.Start(streamHeaderCtx, "keyForCachingBids")
 		k := s.keyForCachingBids(header.GetSlot(), header.GetParentHash(), header.GetPubkey())
 		lm := new(LogMetric)
 		lm.Fields(
