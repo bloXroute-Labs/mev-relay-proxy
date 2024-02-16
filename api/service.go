@@ -278,7 +278,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	_, span := s.tracer.Start(ctx, "streamHeader")
+	streamHeaderCtx, span := s.tracer.Start(ctx, "streamHeader")
 	defer span.End()
 	id := uuid.NewString()
 	client.nodeID = fmt.Sprintf("%v-%v-%v-%v", s.nodeID, client.URL, id, time.Now().UTC().Format("15:04:05.999999999"))
@@ -342,6 +342,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			return nil, nil
 		default:
 		}
+		_, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
 		header, err := stream.Recv()
 		if err == io.EOF {
 			s.logger.With(zap.Error(err)).Warn("stream received EOF", logMetric.fields...)
@@ -409,6 +410,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			BuilderExtraData: header.GetBuilderExtraData(),
 		}
 		s.setBuilderBidForSlot(logMetric, k, header.GetBuilderPubkey(), bid) // run it in goroutine ?
+		streamReceiveSpan.End()
 	}
 	<-done
 	s.logger.Warn("closing connection", logMetric.fields...)
