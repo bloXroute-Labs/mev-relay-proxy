@@ -283,9 +283,6 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	defer span.End()
 	id := uuid.NewString()
 	client.nodeID = fmt.Sprintf("%v-%v-%v-%v", s.nodeID, client.URL, id, time.Now().UTC().Format("15:04:05.999999999"))
-
-	childCtx, childSpan := s.tracer.Start(streamHeaderCtx, "streamHeader")
-	defer childSpan.End(trace.WithTimestamp(time.Now()))
 	stream, err := client.StreamHeader(ctx, &relaygrpc.StreamHeaderRequest{
 		ReqId:       id,
 		NodeId:      client.nodeID,
@@ -339,7 +336,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			closeDone()
 		}
 	}(*logMetric)
-	_, streamReceiveSpan := s.tracer.Start(childCtx, "streamReceive")
+	streamReceiveCtx, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
 
 	for {
 		select {
@@ -404,7 +401,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		lm.Merge(logMetric)
 		s.logger.Info("received header", lm.fields...)
 
-		_, storeBidsSpan := s.tracer.Start(childCtx, "storeBids")
+		_, storeBidsSpan := s.tracer.Start(streamReceiveCtx, "storeBids")
 		// store the bid for builder pubkey
 		bid := &Bid{
 			Value:            header.GetValue(),
