@@ -123,7 +123,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		aKey = authHeader
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", aKey)
-	_, span := s.tracer.Start(ctx, "registerValidator")
+	registerValidaorCtx, span := s.tracer.Start(ctx, "registerValidator")
 	defer span.End()
 
 	id := uuid.NewString()
@@ -148,7 +148,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	s.logger.Info("received", logMetric.fields...)
 
 	// decode auth header
-	_, decodeAuthSpan := s.tracer.Start(ctx, "decodeAuth")
+	_, decodeAuthSpan := s.tracer.Start(registerValidaorCtx, "decodeAuth")
 	accountID, _, err := DecodeAuth(authHeader)
 	decodeAuthSpan.End()
 	if err != nil {
@@ -163,7 +163,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 
 	for _, registrationClient := range s.registrationClients {
 		go func(c *Client) {
-			_, regSpan := s.tracer.Start(ctx, "registerValidatorForClient")
+			_, regSpan := s.tracer.Start(registerValidaorCtx, "registerValidatorForClient")
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
 
@@ -204,6 +204,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		}(registrationClient)
 	}
 
+	_, spanWaitForResponse := s.tracer.Start(registerValidaorCtx, "waitForResponse")
 	// Wait for the first successful response or until all responses are processed
 	for i := 0; i < len(s.registrationClients); i++ {
 		select {
@@ -217,6 +218,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			return struct{}{}, logMetric, nil
 		}
 	}
+	spanWaitForResponse.End()
 	logMetric.Error(errors.New(_err.Message))
 	logMetric.Fields(_err.fields...)
 	return nil, logMetric, _err
