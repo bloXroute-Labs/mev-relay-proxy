@@ -342,7 +342,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			return nil, nil
 		default:
 		}
-		_, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
+		streamReceiveCtx, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
 		header, err := stream.Recv()
 		if err == io.EOF {
 			s.logger.With(zap.Error(err)).Warn("stream received EOF", logMetric.fields...)
@@ -384,7 +384,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			s.logger.Warn("received empty stream", logMetric.fields...)
 			continue
 		}
-
+		_, keyCacheSpan := s.tracer.Start(streamReceiveCtx, "keyForCachingBids")
 		k := s.keyForCachingBids(header.GetSlot(), header.GetParentHash(), header.GetPubkey())
 		lm := new(LogMetric)
 		lm.Fields(
@@ -410,6 +410,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			BuilderExtraData: header.GetBuilderExtraData(),
 		}
 		s.setBuilderBidForSlot(logMetric, k, header.GetBuilderPubkey(), bid) // run it in goroutine ?
+		keyCacheSpan.End()
 		streamReceiveSpan.End()
 	}
 	<-done
