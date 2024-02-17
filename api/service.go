@@ -338,7 +338,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		}
 	}(*logMetric)
 
-	_, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
+	streamReceiveCtx, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
 
 	for {
 		select {
@@ -403,7 +403,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		lm.Merge(logMetric)
 		s.logger.Info("received header", lm.fields...)
 
-		_, storeBidsSpan := s.tracer.Start(ctx, "storeBids")
+		_, storeBidsSpan := s.tracer.Start(streamReceiveCtx, "storeBids")
 		// store the bid for builder pubkey
 		bid := &Bid{
 			Value:            header.GetValue(),
