@@ -148,7 +148,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	s.logger.Info("received", logMetric.fields...)
 
 	// decode auth header
-	_, decodeAuthSpan := s.tracer.Start(ctx, "decodeAuth")
+	_, decodeAuthSpan := s.tracer.Start(registerValidaorCtx, "decodeAuth")
 	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
 		logMetric.String("proxyError", fmt.Sprintf("failed to decode auth header %s", authHeader))
@@ -338,8 +338,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		}
 	}(*logMetric)
 
-	_, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
-	defer streamReceiveSpan.End()
+	streamReceiveCtx, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
 
 	for {
 		select {
@@ -404,7 +403,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		lm.Merge(logMetric)
 		s.logger.Info("received header", lm.fields...)
 
-		_, storeBidsSpan := s.tracer.Start(ctx, "storeBids")
+		_, storeBidsSpan := s.tracer.Start(streamReceiveCtx, "storeBids")
 		// store the bid for builder pubkey
 		bid := &Bid{
 			Value:            header.GetValue(),
@@ -417,6 +416,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		go storeBidsSpan.End(trace.WithTimestamp(time.Now()))
 	}
 	<-done
+	streamReceiveSpan.End()
 
 	s.logger.Warn("closing connection", logMetric.fields...)
 	return nil, nil
