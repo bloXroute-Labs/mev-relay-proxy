@@ -148,7 +148,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	s.logger.Info("received", logMetric.fields...)
 
 	// decode auth header
-	_, decodeAuthSpan := s.tracer.Start(ctx, "decodeAuth")
+	_, decodeAuthSpan := s.tracer.Start(registerValidaorCtx, "decodeAuth")
 	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
 		logMetric.String("proxyError", fmt.Sprintf("failed to decode auth header %s", authHeader))
