@@ -339,7 +339,6 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	}(*logMetric)
 
 	_, streamReceiveSpan := s.tracer.Start(streamHeaderCtx, "streamReceive")
-	defer streamReceiveSpan.End()
 
 	for {
 		select {
@@ -417,6 +416,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 		go storeBidsSpan.End(trace.WithTimestamp(time.Now()))
 	}
 	<-done
+	streamReceiveSpan.End()
 
 	s.logger.Warn("closing connection", logMetric.fields...)
 	return nil, nil
