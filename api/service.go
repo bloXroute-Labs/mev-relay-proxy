@@ -613,7 +613,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	payloadResponseCtx, payloadResponseSpan := s.tracer.Start(payloadCtx, "payloadResponseFromRelay")
 	for _, client := range s.clients {
 		go func(c *Client) {
-			_, clientGetPayloadSpan := s.tracer.Start(ctx, "getPayloadForClient")
+			_, clientGetPayloadSpan := s.tracer.Start(payloadResponseCtx, "getPayloadForClient")
 			defer clientGetPayloadSpan.End()
 			clientCtx, cancel := context.WithTimeout(payloadResponseCtx, 3*time.Second)
 			defer cancel()
