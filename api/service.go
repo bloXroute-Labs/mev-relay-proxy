@@ -156,7 +156,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		s.logger.Warn("failed to decode auth header", logMetric.fields...)
 		//zap.Error(err), 		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
 	}
-	go decodeAuthSpan.End(trace.WithTimestamp(time.Now()))
+	decodeAuthSpan.End(trace.WithTimestamp(time.Now()))
 
 	logMetric.String("accountID", accountID)
 	span.SetAttributes(logMetric.attributes...)
@@ -204,7 +204,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			respChan <- out
 		}(registrationClient)
 	}
-	go spanWaitForResponse.End(trace.WithTimestamp(time.Now()))
+	spanWaitForResponse.End(trace.WithTimestamp(time.Now()))
 
 	_, spanWaitForSuccessfulResponse := s.tracer.Start(registerValidaorCtx, "waitForSuccessfulResponse")
 	// Wait for the first successful response or until all responses are processed
@@ -220,7 +220,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			return struct{}{}, logMetric, nil
 		}
 	}
-	go spanWaitForSuccessfulResponse.End(trace.WithTimestamp(time.Now()))
+	spanWaitForSuccessfulResponse.End(trace.WithTimestamp(time.Now()))
 	logMetric.Error(errors.New(_err.Message))
 	logMetric.Fields(_err.fields...)
 	return nil, logMetric, _err
@@ -413,7 +413,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 			BuilderExtraData: header.GetBuilderExtraData(),
 		}
 		s.setBuilderBidForSlot(logMetric, k, header.GetBuilderPubkey(), bid) // run it in goroutine ?
-		go storeBidsSpan.End(trace.WithTimestamp(time.Now()))
+		storeBidsSpan.End(trace.WithTimestamp(time.Now()))
 	}
 	<-done
 	streamReceiveSpan.End()
@@ -522,7 +522,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		logMetric.String("proxyError", msg)
 		return nil, logMetric, toErrorResp(http.StatusNoContent, "Header value is not present")
 	}
-	go storingHeaderSpan.End(trace.WithTimestamp(time.Now()))
+	storingHeaderSpan.End(trace.WithTimestamp(time.Now()))
 
 	go func() {
 		headerStats := getHeaderStatsRecord{
@@ -729,7 +729,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			return json.RawMessage(out.GetVersionedExecutionPayload()), logMetric, nil
 		}
 	}
-	go payloadResponseSpan.End(trace.WithTimestamp(time.Now()))
+	payloadResponseSpan.End(trace.WithTimestamp(time.Now()))
 	logMetric.Error(errors.New(_err.Message))
 	logMetric.Fields(_err.fields...)
 	return nil, nil, _err
