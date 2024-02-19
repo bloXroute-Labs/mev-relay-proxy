@@ -118,11 +118,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
-	aKey := s.authKey
-	if authHeader != "" {
-		aKey = authHeader
-	}
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", aKey)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	registerValidaorCtx, span := s.tracer.Start(ctx, "registerValidator")
 	defer span.End()
 
@@ -555,11 +551,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	id := uuid.NewString()
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
-	aKey := s.authKey
-	if authHeader != "" {
-		aKey = authHeader
-	}
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", aKey)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	payloadCtx, span := s.tracer.Start(ctx, getPayload)
 	defer span.End()
 
