@@ -511,7 +511,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 				ClientIP:                 clientIP,
 				BlockValue:               "",
 				Succeeded:                false,
-				NodeID:                   s.nodeID,
+				NodeID:                   s.NodeID(),
 				Slot:                     int64(_slot),
 			}
 			s.fluentD.LogToFluentD(fluentstats.Record{
@@ -537,8 +537,8 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			ReqID:                    id,
 			ClientIP:                 clientIP,
 			BlockValue:               new(big.Int).SetBytes(slotBestHeader.Value).String(),
-			Succeeded:                false,
-			NodeID:                   s.nodeID,
+			Succeeded:                true,
+			NodeID:                   s.NodeID(),
 			Slot:                     int64(_slot),
 		}
 		s.fluentD.LogToFluentD(fluentstats.Record{
@@ -683,7 +683,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 					ReqID:             id,
 					ClientIP:          clientIP,
 					Succeeded:         false,
-					NodeID:            s.nodeID,
+					NodeID:            s.NodeID(),
 				}
 				s.fluentD.LogToFluentD(fluentstats.Record{
 					Type: typeRelayProxyGetPayload,
@@ -711,7 +711,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 					ReqID:             id,
 					ClientIP:          clientIP,
 					Succeeded:         true,
-					NodeID:            s.nodeID,
+					NodeID:            s.NodeID(),
 				}
 				s.fluentD.LogToFluentD(fluentstats.Record{
 					Type: typeRelayProxyGetPayload,
