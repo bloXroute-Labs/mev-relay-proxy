@@ -124,7 +124,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := getAuth(r)
-	validatorID := chi.URLParam(r, "id")
+	validatorID := r.URL.Query().Get("id")
 	logMetric := NewLogMetric(
 		[]zap.Field{
 			zap.String("reqHost", r.Host),
@@ -178,7 +178,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	slot := chi.URLParam(r, "slot")
 	parentHash := chi.URLParam(r, "parent_hash")
 	pubKey := chi.URLParam(r, "pubkey")
-	validatorID := chi.URLParam(r, "id")
+	validatorID := r.URL.Query().Get("id")
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := getAuth(r)
 	slotInt := s.AToI(slot)
@@ -251,7 +251,7 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := getAuth(r)
-	validatorID := chi.URLParam(r, "id")
+	validatorID := r.URL.Query().Get("id")
 	logMetric := NewLogMetric(
 		[]zap.Field{
 			zap.String("reqHost", r.Host),
