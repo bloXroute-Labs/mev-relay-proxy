@@ -26,20 +26,20 @@ type MockService struct {
 
 var _ IService = (*MockService)(nil)
 
-func (m *MockService) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, *LogMetric, error) {
+func (m *MockService) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error) {
 	if m.RegisterValidatorFunc != nil {
 		return m.RegisterValidatorFunc(ctx, payload, clientIP, authHeader)
 	}
 	return nil, new(LogMetric), nil
 }
-func (m *MockService) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, *LogMetric, error) {
+func (m *MockService) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader, validatorID string) (any, *LogMetric, error) {
 	if m.GetHeaderFunc != nil {
 		return m.GetHeaderFunc(ctx, clientIP, slot, parentHash, pubKey, authHeader)
 	}
 	return nil, new(LogMetric), nil
 }
 
-func (m *MockService) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, *LogMetric, error) {
+func (m *MockService) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error) {
 	if m.GetPayloadFunc != nil {
 		return m.GetPayloadFunc(ctx, payload, clientIP, authHeader)
 	}

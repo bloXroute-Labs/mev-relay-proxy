@@ -124,7 +124,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := getAuth(r)
-
+	validatorID := chi.URLParam(r, "id")
 	logMetric := NewLogMetric(
 		[]zap.Field{
 			zap.String("reqHost", r.Host),
@@ -132,12 +132,14 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 			zap.String("clientIP", clientIP),
 			zap.String("remoteAddr", r.RemoteAddr),
 			zap.String("requestURI", r.RequestURI),
+			zap.String("validatorID", validatorID),
 			zap.String("authHeader", authHeader),
 			zap.String("traceID", span.SpanContext().TraceID().String()),
 		},
 		[]attribute.KeyValue{
 			attribute.String("reqHost", r.Host),
 			attribute.String("method", r.Method),
+			attribute.String("validatorID", validatorID),
 			attribute.String("clientIP", clientIP),
 			attribute.String("remoteAddr", r.RemoteAddr),
 			attribute.String("requestURI", r.RequestURI),
@@ -155,7 +157,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, lm, err := s.svc.RegisterValidator(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
+	out, lm, err := s.svc.RegisterValidator(r.Context(), receivedAt, bodyBytes, clientIP, authHeader, validatorID)
 	logMetric.Merge(lm)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
@@ -176,6 +178,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	slot := chi.URLParam(r, "slot")
 	parentHash := chi.URLParam(r, "parent_hash")
 	pubKey := chi.URLParam(r, "pubkey")
+	validatorID := chi.URLParam(r, "id")
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := getAuth(r)
 	slotInt := s.AToI(slot)
@@ -189,6 +192,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 			zap.String("remoteAddr", r.RemoteAddr),
 			zap.String("requestURI", r.RequestURI),
 			zap.String("clientIP", clientIP),
+			zap.String("validatorID", validatorID),
 			zap.String("authHeader", authHeader),
 			zap.String("traceID", span.SpanContext().TraceID().String()),
 			zap.Int64("slotStartTimeUnix", slotStartTime.Unix()),
@@ -206,6 +210,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 			attribute.String("clientIP", clientIP),
 			attribute.String("remoteAddr", r.RemoteAddr),
 			attribute.String("requestURI", r.RequestURI),
+			attribute.String("validatorID", validatorID),
 			attribute.String("authHeader", authHeader),
 			attribute.Int64("slotStartTimeUnix", slotStartTime.Unix()),
 			attribute.String("slotStartTime", slotStartTime.UTC().String()),
@@ -227,7 +232,7 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, handleGetHeaderSpan := s.tracer.Start(handleGetHeaderCtx, "server-getHeader")
-	out, lm, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey, authHeader)
+	out, lm, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey, authHeader, validatorID)
 	handleGetHeaderSpan.End()
 	logMetric.Merge(lm)
 	if err != nil {
@@ -246,12 +251,14 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := getAuth(r)
+	validatorID := chi.URLParam(r, "id")
 	logMetric := NewLogMetric(
 		[]zap.Field{
 			zap.String("reqHost", r.Host),
 			zap.String("method", r.Method),
 			zap.String("remoteAddr", r.RemoteAddr),
 			zap.String("requestURI", r.RequestURI),
+			zap.String("validatorID", validatorID),
 			zap.String("authHeader", authHeader),
 			zap.String("clientIP", clientIP),
 			zap.String("traceID", span.SpanContext().TraceID().String()),
@@ -262,6 +269,7 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 			attribute.String("clientIP", clientIP),
 			attribute.String("remoteAddr", r.RemoteAddr),
 			attribute.String("requestURI", r.RequestURI),
+			attribute.String("validatorID", validatorID),
 			attribute.String("authHeader", authHeader),
 			attribute.String("traceID", span.SpanContext().TraceID().String()),
 		},
@@ -277,7 +285,7 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	span.AddEvent("getPayload")
-	out, lm, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP, authHeader)
+	out, lm, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP, authHeader, validatorID)
 	logMetric.Merge(lm)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())

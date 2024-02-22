@@ -28,6 +28,8 @@ type getHeaderStatsRecord struct {
 	Succeeded                bool          `json:"succeeded"`
 	NodeID                   string        `json:"node_id"`
 	Slot                     int64         `json:"slot"`
+	AccountID                string        `json:"account_id"`
+	ValidatorID              string        `json:"validator_id"`
 }
 
 type getPayloadStatsRecord struct {
@@ -43,4 +45,6 @@ type getPayloadStatsRecord struct {
 	ClientIP          string        `json:"client_ip"`
 	Succeeded         bool          `json:"succeeded"`
 	NodeID            string        `json:"node_id"`
+	AccountID         string        `json:"account_id"`
+	ValidatorID       string        `json:"validator_id"`
 }

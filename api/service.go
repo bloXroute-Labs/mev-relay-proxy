@@ -50,9 +50,9 @@ var (
 )
 
 type IService interface {
-	RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, *LogMetric, error)
-	GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, *LogMetric, error)
-	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, *LogMetric, error)
+	RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error)
+	GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader, validatorID string) (any, *LogMetric, error)
+	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error)
 	NodeID() string
 }
 type Service struct {
@@ -109,7 +109,7 @@ func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretT
 	}
 }
 
-func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, *LogMetric, error) {
+func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error) {
 	var (
 		errChan  = make(chan *ErrorResp, len(s.clients))
 		respChan = make(chan *relaygrpc.RegisterValidatorResponse, len(s.clients))
@@ -130,12 +130,14 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			zap.String("reqID", id),
 			zap.String("traceID", parentSpan.SpanContext().TraceID().String()),
 			zap.Time("receivedAt", receivedAt),
+			zap.String("validatorID", validatorID),
 			zap.String("secretToken", s.secretToken),
 		},
 		[]attribute.KeyValue{
 			attribute.String("method", "registerValidator"),
 			attribute.String("clientIP", clientIP),
 			attribute.String("reqID", id),
+			attribute.String("validatorID", validatorID),
 			attribute.String("traceID", parentSpan.SpanContext().TraceID().String()),
 			attribute.Int64("receivedAt", receivedAt.Unix()),
 			attribute.String("authHeader", authHeader),
@@ -417,7 +419,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 	s.logger.Warn("closing connection", logMetric.fields...)
 	return nil, nil
 }
-func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader string) (any, *LogMetric, error) {
+func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader, validatorID string) (any, *LogMetric, error) {
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
 	getHeaderctx, span := s.tracer.Start(ctx, "getHeader")
@@ -432,6 +434,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			zap.Time("receivedAt", receivedAt),
 			zap.String("clientIP", clientIP),
 			zap.String("reqID", id),
+			zap.String("validatorID", validatorID),
 			zap.String("key", k),
 			zap.String("traceID", parentSpan.SpanContext().TraceID().String()),
 			zap.String("slot", slot),
@@ -442,6 +445,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			attribute.String("method", getHeader),
 			attribute.String("clientIP", clientIP),
 			attribute.String("req", id),
+			attribute.String("validatorID", validatorID),
 			attribute.Int64("receivedAt", receivedAt.Unix()),
 			attribute.String("key", k),
 			attribute.String("traceID", parentSpan.SpanContext().TraceID().String()),
@@ -509,6 +513,8 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 				Succeeded:                false,
 				NodeID:                   s.NodeID(),
 				Slot:                     int64(_slot),
+				AccountID:                accountID,
+				ValidatorID:              validatorID,
 			}
 			s.fluentD.LogToFluentD(fluentstats.Record{
 				Type: typeRelayProxyGetHeader,
@@ -536,6 +542,8 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			Succeeded:                true,
 			NodeID:                   s.NodeID(),
 			Slot:                     int64(_slot),
+			AccountID:                accountID,
+			ValidatorID:              validatorID,
 		}
 		s.fluentD.LogToFluentD(fluentstats.Record{
 			Type: typeRelayProxyGetHeader,
@@ -546,7 +554,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	return json.RawMessage(slotBestHeader.Payload), logMetric, nil
 }
 
-func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader string) (any, *LogMetric, error) {
+func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error) {
 	startTime := time.Now().UTC()
 	id := uuid.NewString()
 	parentSpan := trace.SpanFromContext(ctx)
@@ -561,6 +569,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			zap.Time("receivedAt", receivedAt),
 			zap.String("clientIP", clientIP),
 			zap.String("reqID", id),
+			zap.String("validatorID", validatorID),
 			zap.String("traceID", parentSpan.SpanContext().TraceID().String()),
 			zap.String("secretToken", s.secretToken),
 			zap.String("authHeader", authHeader),
@@ -569,6 +578,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			attribute.String("method", getPayload),
 			attribute.String("clientIP", clientIP),
 			attribute.String("reqID", id),
+			attribute.String("validatorID", validatorID),
 			attribute.Int64("receivedAt", receivedAt.Unix()),
 			attribute.String("traceID", parentSpan.SpanContext().TraceID().String()),
 			attribute.String("authHeader", authHeader),
@@ -676,6 +686,8 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 					ClientIP:          clientIP,
 					Succeeded:         false,
 					NodeID:            s.NodeID(),
+					AccountID:         accountID,
+					ValidatorID:       validatorID,
 				}
 				s.fluentD.LogToFluentD(fluentstats.Record{
 					Type: typeRelayProxyGetPayload,
@@ -704,6 +716,8 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 					ClientIP:          clientIP,
 					Succeeded:         true,
 					NodeID:            s.NodeID(),
+					AccountID:         accountID,
+					ValidatorID:       validatorID,
 				}
 				s.fluentD.LogToFluentD(fluentstats.Record{
 					Type: typeRelayProxyGetPayload,
