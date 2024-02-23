@@ -101,12 +101,17 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 	ctx := trace.ContextWithSpan(context.Background(), parentSpan)
 	_, span := s.tracer.Start(ctx, "handleStatus")
 	defer span.End()
+	parsedURL, err := ParseURL(req)
+	if err != nil {
+		s.logger.Warn("url parsing failed", zap.Error(err))
+		// do not fail
+	}
 	span.SetAttributes(
 		attribute.String("reqHost", req.Host),
 		attribute.String("method", req.Method),
 		attribute.String("remoteAddr", req.RemoteAddr),
 		attribute.String("requestURI", req.RequestURI),
-		attribute.String("authHeader", getAuth(req)),
+		attribute.String("authHeader", GetAuth(req, parsedURL)),
 		attribute.String("traceID", span.SpanContext().TraceID().String()),
 	)
 
@@ -120,11 +125,15 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
 	_, span := s.tracer.Start(parentSpanCtx, "handleRegistration")
 	defer span.End()
-
 	receivedAt := time.Now().UTC()
+	parsedURL, err := ParseURL(r)
+	if err != nil {
+		s.logger.Warn("url parsing failed", zap.Error(err))
+		// do not fail
+	}
 	clientIP := GetIPXForwardedFor(r)
-	authHeader := getAuth(r)
-	validatorID := r.URL.Query().Get("id")
+	authHeader := GetAuth(r, parsedURL)
+	validatorID := parsedURL.Query().Get("id")
 	logMetric := NewLogMetric(
 		[]zap.Field{
 			zap.String("reqHost", r.Host),
@@ -132,6 +141,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 			zap.String("clientIP", clientIP),
 			zap.String("remoteAddr", r.RemoteAddr),
 			zap.String("requestURI", r.RequestURI),
+			zap.String("parsedURL", parsedURL.String()),
 			zap.String("validatorID", validatorID),
 			zap.String("authHeader", authHeader),
 			zap.String("traceID", span.SpanContext().TraceID().String()),
@@ -178,19 +188,25 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	slot := chi.URLParam(r, "slot")
 	parentHash := chi.URLParam(r, "parent_hash")
 	pubKey := chi.URLParam(r, "pubkey")
-	validatorID := r.URL.Query().Get("id")
+	parsedURL, err := ParseURL(r)
+	if err != nil {
+		s.logger.Warn("url parsing failed", zap.Error(err))
+		// do not fail
+	}
+	validatorID := parsedURL.Query().Get("id")
 	clientIP := GetIPXForwardedFor(r)
-	authHeader := getAuth(r)
-	slotInt := s.AToI(slot)
+	authHeader := GetAuth(r, parsedURL)
+	slotInt := AToI(slot)
 	slotStartTime := GetSlotStartTime(s.beaconGenesisTime, slotInt)
 
-	sleep, maxSleep := s.GetSleepParams(r, s.getHeaderDelay, s.getHeaderMaxDelay)
+	sleep, maxSleep := GetSleepParams(parsedURL, s.getHeaderDelay, s.getHeaderMaxDelay)
 	logMetric := NewLogMetric(
 		[]zap.Field{
 			zap.String("reqHost", r.Host),
 			zap.String("method", r.Method),
 			zap.String("remoteAddr", r.RemoteAddr),
 			zap.String("requestURI", r.RequestURI),
+			zap.String("parsedURL", parsedURL.String()),
 			zap.String("clientIP", clientIP),
 			zap.String("validatorID", validatorID),
 			zap.String("authHeader", authHeader),
@@ -250,14 +266,20 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 
 	receivedAt := time.Now().UTC()
 	clientIP := GetIPXForwardedFor(r)
-	authHeader := getAuth(r)
-	validatorID := r.URL.Query().Get("id")
+	parsedURL, err := ParseURL(r)
+	if err != nil {
+		s.logger.Warn("url parsing failed", zap.Error(err))
+		// do not fail
+	}
+	authHeader := GetAuth(r, parsedURL)
+	validatorID := parsedURL.Query().Get("id")
 	logMetric := NewLogMetric(
 		[]zap.Field{
 			zap.String("reqHost", r.Host),
 			zap.String("method", r.Method),
 			zap.String("remoteAddr", r.RemoteAddr),
 			zap.String("requestURI", r.RequestURI),
+			zap.String("parsedURL", parsedURL.String()),
 			zap.String("validatorID", validatorID),
 			zap.String("authHeader", authHeader),
 			zap.String("clientIP", clientIP),
