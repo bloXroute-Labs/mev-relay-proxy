@@ -118,7 +118,13 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
+	// use internal auth header if auth header is not provided
+	aKey := s.authKey
+	isAuthHeaderProvided := authHeader != ""
+	if isAuthHeaderProvided {
+		aKey = authHeader
+	}
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", aKey)
 	registerValidaorCtx, span := s.tracer.Start(ctx, "registerValidator")
 	defer span.End()
 
@@ -132,6 +138,8 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			zap.Time("receivedAt", receivedAt),
 			zap.String("validatorID", validatorID),
 			zap.String("secretToken", s.secretToken),
+			zap.String("authHeader", aKey),
+			zap.Bool("isAuthHeaderProvided", isAuthHeaderProvided),
 		},
 		[]attribute.KeyValue{
 			attribute.String("method", "registerValidator"),
@@ -140,7 +148,8 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			attribute.String("validatorID", validatorID),
 			attribute.String("traceID", parentSpan.SpanContext().TraceID().String()),
 			attribute.Int64("receivedAt", receivedAt.Unix()),
-			attribute.String("authHeader", authHeader),
+			attribute.String("authHeader", aKey),
+			attribute.Bool("isAuthHeaderProvided", isAuthHeaderProvided),
 		},
 	)
 	s.logger.Info("received", logMetric.fields...)
@@ -178,7 +187,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 				Version:     s.version,
 				NodeId:      c.nodeID,
 				ReceivedAt:  timestamppb.New(receivedAt),
-				AuthHeader:  authHeader,
+				AuthHeader:  aKey,
 				SecretToken: s.secretToken,
 			}
 			out, err := selectedRelay.RegisterValidator(clientCtx, req)
@@ -559,6 +568,12 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	id := uuid.NewString()
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
+	// use internal auth header if auth header is not provided
+	aKey := s.authKey
+	isAuthHeaderProvided := authHeader != ""
+	if isAuthHeaderProvided {
+		aKey = authHeader
+	}
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
 	payloadCtx, span := s.tracer.Start(ctx, getPayload)
 	defer span.End()
@@ -572,7 +587,8 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			zap.String("validatorID", validatorID),
 			zap.String("traceID", parentSpan.SpanContext().TraceID().String()),
 			zap.String("secretToken", s.secretToken),
-			zap.String("authHeader", authHeader),
+			zap.String("authHeader", aKey),
+			zap.Bool("isAuthHeaderProvided", isAuthHeaderProvided),
 		},
 		[]attribute.KeyValue{
 			attribute.String("method", getPayload),
@@ -581,7 +597,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			attribute.String("validatorID", validatorID),
 			attribute.Int64("receivedAt", receivedAt.Unix()),
 			attribute.String("traceID", parentSpan.SpanContext().TraceID().String()),
-			attribute.String("authHeader", authHeader),
+			attribute.String("authHeader", aKey),
 			attribute.String("secretToken", s.secretToken),
 		},
 	)
