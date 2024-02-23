@@ -2,51 +2,19 @@ package api
 
 import (
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
+	"net/url"
 
 	"fmt"
 	eth2Api "github.com/attestantio/go-eth2-client/api"
 	eth2ApiV1Capella "github.com/attestantio/go-eth2-client/api/v1/capella"
 	eth2ApiV1Deneb "github.com/attestantio/go-eth2-client/api/v1/deneb"
 	"github.com/attestantio/go-eth2-client/spec"
-	"io"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/ethereum/go-ethereum/common/hexutil"
-
-	"go.uber.org/zap"
 )
-
-const (
-	weiToEthSignificantDigits = 18
-)
-
-// decodeJSON reads JSON from io.Reader and decodes it into a struct
-//
-//lint:ignore U1000  intentionally unused in this file
-func decodeJSON(r io.Reader, dst any) error {
-	decoder := json.NewDecoder(r)
-	decoder.DisallowUnknownFields()
-
-	if err := decoder.Decode(dst); err != nil {
-		return err
-	}
-	return nil
-}
-
-// decodeAndCloseJSON reads JSON from io.ReadCloser, decodes it into a struct and
-// closes the reader
-//
-//lint:ignore U1000  intentionally unused in this file
-func decodeJSONAndClose(r io.ReadCloser, dst any) error {
-	defer r.Close()
-	return decodeJSON(r, dst)
-}
 
 func GetIPXForwardedFor(r *http.Request) string {
 	forwarded := r.Header.Get("X-Forwarded-For")
@@ -58,15 +26,26 @@ func GetIPXForwardedFor(r *http.Request) string {
 	}
 	return r.RemoteAddr
 }
+func ParseURL(r *http.Request) (*url.URL, error) {
+	u, err := url.QueryUnescape(r.URL.String())
+	if err != nil {
+		return r.URL, fmt.Errorf("failed to decode url: %v, reason %v", r.URL.String(), err)
+	}
+	urlParsed, err := url.Parse(u)
+	if err != nil {
+		return r.URL, fmt.Errorf("failed to parse decoded url: %v, reason %v", r.URL.String(), err)
+	}
+	return urlParsed, nil
+}
 
-func getAuth(r *http.Request) string {
+func GetAuth(r *http.Request, parsedURL *url.URL) string {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
 		return authHeader
 	}
 
 	// fallback to query param
-	return r.URL.Query().Get("auth")
+	return parsedURL.Query().Get("auth")
 }
 
 func DecodeAuth(in string) (string, string, error) {
@@ -82,31 +61,30 @@ func DecodeAuth(in string) (string, string, error) {
 }
 
 // GetSleepParams returns the sleep time and max sleep time from the request
-func (s *Server) GetSleepParams(r *http.Request, delayInMs, maxDelayInMs int64) (int64, int64) {
+func GetSleepParams(parsedURL *url.URL, delayInMs, maxDelayInMs int64) (int64, int64) {
 
 	sleepTime, sleepMax := delayInMs, maxDelayInMs
 
-	sleep := r.URL.Query().Get("sleep")
+	sleep := parsedURL.Query().Get("sleep")
 	if sleep != "" {
-		sleepTime = s.AToI(sleep)
+		sleepTime = AToI(sleep)
 	}
 
-	maxSleep := r.URL.Query().Get("max_sleep")
+	maxSleep := parsedURL.Query().Get("max_sleep")
 	if maxSleep != "" {
-		sleepMax = s.AToI(maxSleep)
+		sleepMax = AToI(maxSleep)
 	}
 
 	return sleepTime, sleepMax
 }
 
 // AToI converts a string to an int64
-func (s *Server) AToI(value string) int64 {
+func AToI(value string) int64 {
 	i, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		s.logger.Error("failed to parse int", zap.String("value", value), zap.Error(err))
 		return 0
 	}
-	return int64(i)
+	return i
 }
 
 // GetSlotStartTime returns the time of the start of the slot
@@ -146,22 +124,4 @@ func (r *VersionedSignedBlindedBeaconBlock) UnmarshalJSON(input []byte) error {
 		return nil
 	}
 	return fmt.Errorf("failed to unmarshal SignedBlindedBeaconBlock : %v", err)
-}
-func WeiToEth(valueString string) string {
-	numDigits := len(valueString)
-	missing := int(math.Max(0, float64((weiToEthSignificantDigits+1)-numDigits)))
-	prefix := "0000000000000000000"[:missing]
-	ethValue := prefix + valueString
-	decimalIndex := len(ethValue) - weiToEthSignificantDigits
-	return ethValue[:decimalIndex] + "." + ethValue[decimalIndex:]
-}
-
-// DecodeExtraData returns a decoded string from block ExtraData
-func DecodeExtraData(extraData []byte) string {
-	extraDataString := hexutil.Bytes(extraData).String()
-	decodedExtraData, err := hex.DecodeString(strings.TrimPrefix(extraDataString, "0x"))
-	if err != nil {
-		return ""
-	}
-	return string(decodedExtraData)
 }

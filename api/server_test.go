@@ -56,12 +56,27 @@ func (m *MockService) NodeID() string {
 func TestServer_HandleRegistration(t *testing.T) {
 	testCases := map[string]struct {
 		requestBody   []byte
+		url           string
 		mockService   *MockService
 		expectedCode  int
 		expectedError string
 	}{
 		"When registration succeeded": {
 			requestBody: []byte(`{"key": "value"}`),
+			url:         "/eth/v1/builder/validators?id=VG&auth=YmY1YzVkMWItNzAzMC00ZjA1LTlhYzMtMjE3MDk1ZTlkMmI2OjFmNGIwZjU5ZGYwNDM1MWQ2ZWRkOGUxYjU2ZTk3MTNh",
+			mockService: &MockService{
+				logger: zap.NewNop(),
+				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP, authKey, validatorID string) (interface{}, *LogMetric, error) {
+					return nil, nil, nil
+
+				},
+			},
+			expectedCode:  http.StatusOK,
+			expectedError: "",
+		},
+		"Registration should succeed when url contains escape char": {
+			requestBody: []byte(`{"key": "value"}`),
+			url:         "/eth/v1/builder/validators?id=VG%26auth=YmY1YzVkMWItNzAzMC00ZjA1LTlhYzMtMjE3MDk1ZTlkMmI2OjFmNGIwZjU5ZGYwNDM1MWQ2ZWRkOGUxYjU2ZTk3MTNh%26sleep=600%26max_sleep=1200",
 			mockService: &MockService{
 				logger: zap.NewNop(),
 				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP, authKey, validatorID string) (interface{}, *LogMetric, error) {
@@ -74,6 +89,7 @@ func TestServer_HandleRegistration(t *testing.T) {
 		},
 		"When registration failed": {
 			requestBody: []byte(`{"key": "value"}`),
+			url:         "/eth/v1/builder/validators",
 			mockService: &MockService{
 				logger: zap.NewNop(),
 				RegisterValidatorFunc: func(ctx context.Context, payload []byte, clientIP, authKey, validatorID string) (interface{}, *LogMetric, error) {
@@ -87,7 +103,7 @@ func TestServer_HandleRegistration(t *testing.T) {
 
 	for testName, tc := range testCases {
 		t.Run(testName, func(t *testing.T) {
-			req, err := http.NewRequest("POST", "/eth/v1/builder/validators?id=data_nexus&auth=ZjZkYjIyZWItMGE0OS00YWY5LWJhMzItNTE1ZjllNDEyODE4OmEwOWIwZTFkZDg5ZGE4NDUwNjVmZjA3ODk2YmE4OTdl", bytes.NewBuffer(tc.requestBody))
+			req, err := http.NewRequest("POST", tc.url, bytes.NewBuffer(tc.requestBody))
 			if err != nil {
 				t.Fatal(err)
 			}
