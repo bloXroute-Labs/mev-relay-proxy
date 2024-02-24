@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/bloXroute-Labs/mev-relay-proxy/fluentstats"
 	"time"
 )
 
@@ -47,4 +48,11 @@ type getPayloadStatsRecord struct {
 	NodeID            string        `json:"node_id"`
 	AccountID         string        `json:"account_id"`
 	ValidatorID       string        `json:"validator_id"`
+}
+
+type StatsRecord struct {
+	Record    fluentstats.Record
+	Timestamp time.Time
+	NodeID    string
+	Type      string
 }

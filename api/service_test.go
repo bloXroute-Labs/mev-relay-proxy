@@ -188,10 +188,11 @@ func TestService_getPayload(t *testing.T) {
 	for testName, tt := range tests {
 		t.Run(testName, func(t *testing.T) {
 			s := &Service{
-				logger:  zap.NewNop(),
-				clients: []*Client{{RelayClient: &mockRelayClient{GetPayloadFunc: tt.f}}},
-				tracer:  noop.NewTracerProvider().Tracer("test"),
-				fluentD: fluentstats.NewStats(true, "0.0.0.0:24224"),
+				logger:        zap.NewNop(),
+				clients:       []*Client{{RelayClient: &mockRelayClient{GetPayloadFunc: tt.f}}},
+				tracer:        noop.NewTracerProvider().Tracer("test"),
+				fluentD:       fluentstats.NewStats(true, "0.0.0.0:24224"),
+				statsRecordCh: make(chan StatsRecord, 100),
 			}
 			got, _, err := s.GetPayload(context.Background(), time.Now(), nil, "", TestAuthHeader, "")
 			if err == nil {
@@ -411,8 +412,8 @@ func TestService_StreamHeaderAndGetMethod(t *testing.T) {
 
 	registrationClient := &Client{lis.Addr().String(), "", conn, relayClient}
 	registrationClients := []*Client{registrationClient}
-
-	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "dummy-token", 0, fluent, clients, registrationClients...)
+	statsRecordCh := make(chan StatsRecord, 100)
+	service := NewService(l, noop.NewTracerProvider().Tracer("test"), "test", "", "", "dummy-token", 0, fluent, statsRecordCh, clients, registrationClients...)
 
 	go func() {
 		if _, err := service.StreamHeader(ctx, c); err != nil {

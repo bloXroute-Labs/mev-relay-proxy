@@ -62,8 +62,9 @@ type Service struct {
 	authKey     string
 	secretToken string
 
-	tracer  trace.Tracer
-	fluentD fluentstats.Stats
+	tracer        trace.Tracer
+	fluentD       fluentstats.Stats
+	statsRecordCh chan StatsRecord
 
 	bids               *syncmap.SyncMap[string, []*Bid]
 	builderBidsForSlot *cache.Cache
@@ -90,7 +91,7 @@ type Bid struct {
 	BuilderExtraData string
 }
 
-func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, beaconGenesisTime int64, fluentD fluentstats.Stats, clients []*Client, registrationClients ...*Client) *Service {
+func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretToken string, nodeID string, authKey string, beaconGenesisTime int64, fluentD fluentstats.Stats, statsRecordChan chan StatsRecord, clients []*Client, registrationClients ...*Client) *Service {
 	return &Service{
 		logger:                        logger,
 		version:                       version,
@@ -106,6 +107,7 @@ func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretT
 		currentRegistrationRelayIndex: 0,
 		tracer:                        tracer,
 		fluentD:                       fluentD,
+		statsRecordCh:                 statsRecordChan,
 	}
 }
 
@@ -506,36 +508,6 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	if slotBestHeader == nil || err != nil {
 		msg := fmt.Sprintf("header value is not present for the requested key %v", keyForCachingBids)
 		span.AddEvent("Header value is not present", trace.WithAttributes(attribute.String("msg", msg)))
-		go func() {
-			headerStats := getHeaderStatsRecord{
-				RequestReceivedAt:        receivedAt,
-				FetchGetHeaderStartTime:  fetchGetHeaderStartTime.String(),
-				FetchGetHeaderDurationMS: fetchGetHeaderDurationMS,
-				Duration:                 time.Since(startTime),
-				MsIntoSlot:               msIntoSlot,
-				ParentHash:               parentHash,
-				PubKey:                   pubKey,
-				BlockHash:                "",
-				ReqID:                    id,
-				ClientIP:                 clientIP,
-				BlockValue:               "",
-				Succeeded:                false,
-				NodeID:                   s.NodeID(),
-				Slot:                     int64(_slot),
-				AccountID:                accountID,
-				ValidatorID:              validatorID,
-			}
-			s.fluentD.LogToFluentD(fluentstats.Record{
-				Type: typeRelayProxyGetHeader,
-				Data: headerStats,
-			}, time.Now().UTC(), s.NodeID(), statsRelayProxyGetHeader)
-		}()
-		logMetric.String("proxyError", msg)
-		return nil, logMetric, toErrorResp(http.StatusNoContent, "Header value is not present")
-	}
-	storingHeaderSpan.End(trace.WithTimestamp(time.Now()))
-
-	go func() {
 		headerStats := getHeaderStatsRecord{
 			RequestReceivedAt:        receivedAt,
 			FetchGetHeaderStartTime:  fetchGetHeaderStartTime.String(),
@@ -544,21 +516,59 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 			MsIntoSlot:               msIntoSlot,
 			ParentHash:               parentHash,
 			PubKey:                   pubKey,
-			BlockHash:                slotBestHeader.BlockHash,
+			BlockHash:                "",
 			ReqID:                    id,
 			ClientIP:                 clientIP,
-			BlockValue:               new(big.Int).SetBytes(slotBestHeader.Value).String(),
-			Succeeded:                true,
+			BlockValue:               "",
+			Succeeded:                false,
 			NodeID:                   s.NodeID(),
 			Slot:                     int64(_slot),
 			AccountID:                accountID,
 			ValidatorID:              validatorID,
 		}
-		s.fluentD.LogToFluentD(fluentstats.Record{
+		s.statsRecordCh <- StatsRecord{
+			Record: fluentstats.Record{
+				Type: typeRelayProxyGetHeader,
+				Data: headerStats,
+			},
+			Timestamp: time.Now().UTC(),
+			NodeID:    s.NodeID(),
+			Type:      statsRelayProxyGetHeader,
+		}
+
+		logMetric.String("proxyError", msg)
+		return nil, logMetric, toErrorResp(http.StatusNoContent, "Header value is not present")
+	}
+	storingHeaderSpan.End(trace.WithTimestamp(time.Now()))
+
+	headerStats := getHeaderStatsRecord{
+		RequestReceivedAt:        receivedAt,
+		FetchGetHeaderStartTime:  fetchGetHeaderStartTime.String(),
+		FetchGetHeaderDurationMS: fetchGetHeaderDurationMS,
+		Duration:                 time.Since(startTime),
+		MsIntoSlot:               msIntoSlot,
+		ParentHash:               parentHash,
+		PubKey:                   pubKey,
+		BlockHash:                slotBestHeader.BlockHash,
+		ReqID:                    id,
+		ClientIP:                 clientIP,
+		BlockValue:               new(big.Int).SetBytes(slotBestHeader.Value).String(),
+		Succeeded:                true,
+		NodeID:                   s.NodeID(),
+		Slot:                     int64(_slot),
+		AccountID:                accountID,
+		ValidatorID:              validatorID,
+	}
+
+	s.statsRecordCh <- StatsRecord{
+		Record: fluentstats.Record{
 			Type: typeRelayProxyGetHeader,
 			Data: headerStats,
-		}, time.Now().UTC(), s.NodeID(), statsRelayProxyGetHeader)
-	}()
+		},
+		Timestamp: time.Now().UTC(),
+		NodeID:    s.NodeID(),
+		Type:      statsRelayProxyGetHeader,
+	}
 
 	return json.RawMessage(slotBestHeader.Payload), logMetric, nil
 }
@@ -705,10 +715,15 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 					AccountID:         accountID,
 					ValidatorID:       validatorID,
 				}
-				s.fluentD.LogToFluentD(fluentstats.Record{
-					Type: typeRelayProxyGetPayload,
-					Data: payloadStat,
-				}, time.Now().UTC(), s.NodeID(), statsRelayProxyGetPayload)
+				s.statsRecordCh <- StatsRecord{
+					Record: fluentstats.Record{
+						Type: typeRelayProxyGetPayload,
+						Data: payloadStat,
+					},
+					Timestamp: time.Now().UTC(),
+					NodeID:    s.NodeID(),
+					Type:      statsRelayProxyGetPayload,
+				}
 			}()
 			logMetric.Error(ctx.Err())
 			logMetric.String("relayError", "failed to getPayload")
@@ -718,28 +733,31 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		case out := <-respChan:
 			slotStartTime := GetSlotStartTime(s.beaconGenesisTime, int64(out.GetSlot()))
 			msIntoSlot := time.Since(slotStartTime).Milliseconds()
-			go func(_slotStartTime time.Time, _msIntoSlot int64) {
-				payloadStats := getPayloadStatsRecord{
-					RequestReceivedAt: receivedAt,
-					Duration:          time.Since(startTime),
-					SlotStartTime:     _slotStartTime,
-					MsIntoSlot:        _msIntoSlot,
-					Slot:              out.GetSlot(),
-					ParentHash:        out.GetParentHash(),
-					PubKey:            out.GetPubkey(),
-					BlockHash:         out.GetBlockHash(),
-					ReqID:             id,
-					ClientIP:          clientIP,
-					Succeeded:         true,
-					NodeID:            s.NodeID(),
-					AccountID:         accountID,
-					ValidatorID:       validatorID,
-				}
-				s.fluentD.LogToFluentD(fluentstats.Record{
+			payloadStats := getPayloadStatsRecord{
+				RequestReceivedAt: receivedAt,
+				Duration:          time.Since(startTime),
+				SlotStartTime:     slotStartTime,
+				MsIntoSlot:        msIntoSlot,
+				Slot:              out.GetSlot(),
+				ParentHash:        out.GetParentHash(),
+				PubKey:            out.GetPubkey(),
+				BlockHash:         out.GetBlockHash(),
+				ReqID:             id,
+				ClientIP:          clientIP,
+				Succeeded:         true,
+				NodeID:            s.NodeID(),
+				AccountID:         accountID,
+				ValidatorID:       validatorID,
+			}
+			s.statsRecordCh <- StatsRecord{
+				Record: fluentstats.Record{
 					Type: typeRelayProxyGetPayload,
 					Data: payloadStats,
-				}, time.Now().UTC(), s.NodeID(), statsRelayProxyGetPayload)
-			}(slotStartTime, msIntoSlot)
+				},
+				Timestamp: time.Now().UTC(),
+				NodeID:    s.NodeID(),
+				Type:      statsRelayProxyGetPayload,
+			}
 			logMetric.Fields([]zap.Field{
 				zap.Duration("duration", time.Since(startTime)),
 				zap.Uint64("slot", out.GetSlot()),
@@ -815,4 +833,15 @@ func (s *Service) getBuilderBidForSlot(cacheKey string, builderPubkey string) (*
 
 func (s *Service) NodeID() string {
 	return s.nodeID
+}
+
+func (s *Service) SendStats(ctx context.Context) {
+	for {
+		select {
+		case record := <-s.statsRecordCh:
+			s.fluentD.LogToFluentD(record.Record, record.Timestamp, record.NodeID, record.Type)
+		case <-ctx.Done():
+			return
+		}
+	}
 }

@@ -29,9 +29,10 @@ import (
 
 var (
 	// Included in the build process
-	_BuildVersion string
-	_AppName      = "mev-relay-proxy"
-	_SecretToken  string
+	_BuildVersion       string
+	_AppName            = "mev-relay-proxy"
+	_SecretToken        string
+	statsRecordChanSize = 100
 	// defaults
 	defaultListenAddr = getEnv("RELAY_PROXY_LISTEN_ADDR", "localhost:18551")
 
@@ -127,11 +128,15 @@ func main() {
 
 	// init fluentD if enabled
 	fluentLogger := fluentstats.NewStats(true, *fluentDHostFlag)
+	statsRecordChan := make(chan api.StatsRecord, statsRecordChanSize)
 
 	// init service and server
-	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, *beaconGenesisTime, fluentLogger, newClients, newRegistrationClients...)
+	svc := api.NewService(l, tracer, _BuildVersion, _SecretToken, *nodeID, *authKey, *beaconGenesisTime, fluentLogger, statsRecordChan, newClients, newRegistrationClients...)
 	server := api.New(l, svc, *listenAddr, *getHeaderDelayInMS, *getHeaderMaxDelayInMS, *beaconGenesisTime, tracer, fluentLogger)
 
+	for i := 1; i <= statsRecordChanSize; i++ {
+		go svc.SendStats(ctx)
+	}
 	exit := make(chan struct{})
 	go func() {
 		shutdown := make(chan os.Signal, 1)
