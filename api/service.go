@@ -125,7 +125,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		aKey = authHeader
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", aKey)
-	registerValidaorCtx, span := s.tracer.Start(ctx, "registerValidator")
+	registerValidatorCtx, span := s.tracer.Start(ctx, "registerValidator")
 	defer span.End()
 
 	id := uuid.NewString()
@@ -155,7 +155,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	s.logger.Info("received", logMetric.fields...)
 
 	// decode auth header
-	_, decodeAuthSpan := s.tracer.Start(registerValidaorCtx, "decodeAuth")
+	_, decodeAuthSpan := s.tracer.Start(registerValidatorCtx, "decodeAuth")
 	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
 		logMetric.String("proxyError", fmt.Sprintf("failed to decode auth header %s", authHeader))
@@ -168,10 +168,12 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	logMetric.String("accountID", accountID)
 	span.SetAttributes(logMetric.attributes...)
 	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
-	_, spanWaitForResponse := s.tracer.Start(registerValidaorCtx, "waitForResponse")
+	waitForResponseCtx, spanWaitForResponse := s.tracer.Start(registerValidatorCtx, "waitForResponse")
 	for _, registrationClient := range s.registrationClients {
 		go func(c *Client) {
-			_, regSpan := s.tracer.Start(ctx, "registerValidatorForClient")
+			_, regSpan := s.tracer.Start(waitForResponseCtx, "registerValidatorForClient")
+			defer regSpan.End(trace.WithTimestamp(time.Now()))
+
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
 
@@ -213,7 +215,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	}
 	spanWaitForResponse.End(trace.WithTimestamp(time.Now()))
 
-	_, spanWaitForSuccessfulResponse := s.tracer.Start(registerValidaorCtx, "waitForSuccessfulResponse")
+	_, spanWaitForSuccessfulResponse := s.tracer.Start(registerValidatorCtx, "waitForSuccessfulResponse")
 	// Wait for the first successful response or until all responses are processed
 	for i := 0; i < len(s.registrationClients); i++ {
 		select {
