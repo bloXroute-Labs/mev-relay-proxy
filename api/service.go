@@ -435,7 +435,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader, validatorID string) (any, *LogMetric, error) {
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
-	getHeaderCtx, span := s.tracer.Start(ctx, "getHeader")
+	ctx, span := s.tracer.Start(ctx, "getHeader")
 	defer span.End()
 	startTime := time.Now().UTC()
 
@@ -489,16 +489,18 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 	span.SetAttributes(logMetric.attributes...)
 
-	_, storingHeaderSpan := s.tracer.Start(getHeaderCtx, "storingHeader")
+	_, storingHeaderSpan := s.tracer.Start(ctx, "storingHeader")
 
 	//TODO: send fluentd stats for StatusNoContent error cases
 
 	if len(pubKey) != 98 {
+		storingHeaderSpan.End(trace.WithTimestamp(time.Now()))
 		logMetric.String("proxyError", fmt.Sprintf("pub key should be %d long", 98))
 		return nil, logMetric, toErrorResp(http.StatusNoContent, errInvalidPubkey.Error())
 	}
 
 	if len(parentHash) != 66 {
+		storingHeaderSpan.End(trace.WithTimestamp(time.Now()))
 		logMetric.String("proxyError", fmt.Sprintf("pub key should be %d long", 98))
 		return nil, logMetric, toErrorResp(http.StatusNoContent, errInvalidHash.Error())
 	}
@@ -579,7 +581,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		aKey = authHeader
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	payloadCtx, span := s.tracer.Start(ctx, getPayload)
+	ctx, span := s.tracer.Start(ctx, getPayload)
 	defer span.End()
 
 	logMetric := NewLogMetric(
@@ -632,12 +634,12 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		respChan = make(chan *relaygrpc.GetPayloadResponse, len(s.clients))
 		_err     *ErrorResp
 	)
-	payloadResponseCtx, payloadResponseSpan := s.tracer.Start(payloadCtx, "payloadResponseFromRelay")
+	ctx, payloadResponseSpan := s.tracer.Start(ctx, "payloadResponseFromRelay")
 	for _, client := range s.clients {
-		go func(c *Client) {
-			_, clientGetPayloadSpan := s.tracer.Start(payloadResponseCtx, "getPayloadForClient")
+		go func(c *Client, _ctx context.Context) {
+			_ctx, clientGetPayloadSpan := s.tracer.Start(_ctx, "getPayloadForClient")
 			defer clientGetPayloadSpan.End()
-			clientCtx, cancel := context.WithTimeout(payloadResponseCtx, 3*time.Second)
+			clientCtx, cancel := context.WithTimeout(_ctx, 3*time.Second)
 			defer cancel()
 			out, err := c.GetPayload(clientCtx, req)
 			clientGetPayloadSpan.End(trace.WithTimestamp(time.Now()))
@@ -657,7 +659,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 				return
 			}
 			respChan <- out
-		}(client)
+		}(client, ctx)
 	}
 	// Wait for the first successful response or until all responses are processed
 	for i := 0; i < len(s.clients); i++ {
