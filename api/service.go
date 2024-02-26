@@ -170,9 +170,9 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
 	ctx, spanWaitForResponse := s.tracer.Start(ctx, "waitForResponse")
 	for _, registrationClient := range s.registrationClients {
-		go func(c *Client) {
-			ctx, regSpan := s.tracer.Start(ctx, "registerValidatorForClient")
-			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+		go func(c *Client, _ctx context.Context) {
+			_ctx, regSpan := s.tracer.Start(_ctx, "registerValidatorForClient")
+			clientCtx, cancel := context.WithTimeout(_ctx, requestTimeout)
 			defer cancel()
 
 			s.registrationRelayMutex.Lock()
@@ -213,7 +213,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			regSpan.SetStatus(otelcodes.Ok, "relay returned success response code")
 			regSpan.End()
 			respChan <- out
-		}(registrationClient)
+		}(registrationClient, ctx)
 	}
 	spanWaitForResponse.End(trace.WithTimestamp(time.Now()))
 
