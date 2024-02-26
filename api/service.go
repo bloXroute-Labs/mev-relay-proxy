@@ -125,7 +125,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		aKey = authHeader
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", aKey)
-	registerValidaorCtx, span := s.tracer.Start(ctx, "registerValidator")
+	ctx, span := s.tracer.Start(ctx, "registerValidator")
 	defer span.End()
 
 	id := uuid.NewString()
@@ -155,7 +155,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	s.logger.Info("received", logMetric.fields...)
 
 	// decode auth header
-	_, decodeAuthSpan := s.tracer.Start(registerValidaorCtx, "decodeAuth")
+	ctx, decodeAuthSpan := s.tracer.Start(ctx, "decodeAuth")
 	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
 		logMetric.String("proxyError", fmt.Sprintf("failed to decode auth header %s", authHeader))
@@ -168,10 +168,10 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	logMetric.String("accountID", accountID)
 	span.SetAttributes(logMetric.attributes...)
 	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
-	_, spanWaitForResponse := s.tracer.Start(registerValidaorCtx, "waitForResponse")
+	ctx, spanWaitForResponse := s.tracer.Start(ctx, "waitForResponse")
 	for _, registrationClient := range s.registrationClients {
 		go func(c *Client) {
-			_, regSpan := s.tracer.Start(ctx, "registerValidatorForClient")
+			ctx, regSpan := s.tracer.Start(ctx, "registerValidatorForClient")
 			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
 
@@ -194,26 +194,30 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			regSpan.AddEvent("registerValidator", trace.WithAttributes(attribute.String("url", c.URL)))
 			if err != nil {
 				regSpan.SetStatus(otelcodes.Error, err.Error())
+				regSpan.End()
 				errChan <- toErrorResp(http.StatusInternalServerError, "relay returned error", zap.String("relayError", err.Error()), zap.String("url", c.URL))
 				return
 			}
 			if out == nil {
 				regSpan.SetStatus(otelcodes.Error, errors.New("empty response from relay").Error())
+				regSpan.End()
 				errChan <- toErrorResp(http.StatusInternalServerError, "empty response from relay", zap.String("url", c.URL))
 				return
 			}
 			if out.Code != uint32(codes.OK) {
 				regSpan.SetStatus(otelcodes.Error, errors.New("relay returned failure response code").Error())
+				regSpan.End()
 				errChan <- toErrorResp(http.StatusBadRequest, "relay returned failure response code", zap.String("relayError", out.Message), zap.String("url", c.URL))
 				return
 			}
 			regSpan.SetStatus(otelcodes.Ok, "relay returned success response code")
+			regSpan.End()
 			respChan <- out
 		}(registrationClient)
 	}
 	spanWaitForResponse.End(trace.WithTimestamp(time.Now()))
 
-	_, spanWaitForSuccessfulResponse := s.tracer.Start(registerValidaorCtx, "waitForSuccessfulResponse")
+	ctx, spanWaitForSuccessfulResponse := s.tracer.Start(ctx, "waitForSuccessfulResponse")
 	// Wait for the first successful response or until all responses are processed
 	for i := 0; i < len(s.registrationClients); i++ {
 		select {
@@ -431,7 +435,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader, validatorID string) (any, *LogMetric, error) {
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
-	getHeaderctx, span := s.tracer.Start(ctx, "getHeader")
+	getHeaderCtx, span := s.tracer.Start(ctx, "getHeader")
 	defer span.End()
 	startTime := time.Now().UTC()
 
@@ -485,7 +489,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 	span.SetAttributes(logMetric.attributes...)
 
-	_, storingHeaderSpan := s.tracer.Start(getHeaderctx, "storingHeader")
+	_, storingHeaderSpan := s.tracer.Start(getHeaderCtx, "storingHeader")
 
 	//TODO: send fluentd stats for StatusNoContent error cases
 
