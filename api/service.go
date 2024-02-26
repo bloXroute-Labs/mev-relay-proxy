@@ -125,7 +125,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		aKey = authHeader
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", aKey)
-	registerValidaorCtx, span := s.tracer.Start(ctx, "registerValidator")
+	ctx, span := s.tracer.Start(ctx, "registerValidator")
 	defer span.End()
 
 	id := uuid.NewString()
@@ -155,7 +155,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	s.logger.Info("received", logMetric.fields...)
 
 	// decode auth header
-	_, decodeAuthSpan := s.tracer.Start(registerValidaorCtx, "decodeAuth")
+	ctx, decodeAuthSpan := s.tracer.Start(ctx, "decodeAuth")
 	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
 		logMetric.String("proxyError", fmt.Sprintf("failed to decode auth header %s", authHeader))
@@ -168,11 +168,11 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	logMetric.String("accountID", accountID)
 	span.SetAttributes(logMetric.attributes...)
 	//TODO: For now using relay proxy auth-header to allow every validator to connect  But this needs to be updated in the future to  use validator auth header.
-	_, spanWaitForResponse := s.tracer.Start(registerValidaorCtx, "waitForResponse")
+	ctx, spanWaitForResponse := s.tracer.Start(ctx, "waitForResponse")
 	for _, registrationClient := range s.registrationClients {
-		go func(c *Client) {
-			_, regSpan := s.tracer.Start(ctx, "registerValidatorForClient")
-			clientCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+		go func(c *Client, _ctx context.Context) {
+			_ctx, regSpan := s.tracer.Start(_ctx, "registerValidatorForClient")
+			clientCtx, cancel := context.WithTimeout(_ctx, requestTimeout)
 			defer cancel()
 
 			s.registrationRelayMutex.Lock()
@@ -194,26 +194,30 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			regSpan.AddEvent("registerValidator", trace.WithAttributes(attribute.String("url", c.URL)))
 			if err != nil {
 				regSpan.SetStatus(otelcodes.Error, err.Error())
+				regSpan.End()
 				errChan <- toErrorResp(http.StatusInternalServerError, "relay returned error", zap.String("relayError", err.Error()), zap.String("url", c.URL))
 				return
 			}
 			if out == nil {
 				regSpan.SetStatus(otelcodes.Error, errors.New("empty response from relay").Error())
+				regSpan.End()
 				errChan <- toErrorResp(http.StatusInternalServerError, "empty response from relay", zap.String("url", c.URL))
 				return
 			}
 			if out.Code != uint32(codes.OK) {
 				regSpan.SetStatus(otelcodes.Error, errors.New("relay returned failure response code").Error())
+				regSpan.End()
 				errChan <- toErrorResp(http.StatusBadRequest, "relay returned failure response code", zap.String("relayError", out.Message), zap.String("url", c.URL))
 				return
 			}
 			regSpan.SetStatus(otelcodes.Ok, "relay returned success response code")
+			regSpan.End()
 			respChan <- out
-		}(registrationClient)
+		}(registrationClient, ctx)
 	}
 	spanWaitForResponse.End(trace.WithTimestamp(time.Now()))
 
-	_, spanWaitForSuccessfulResponse := s.tracer.Start(registerValidaorCtx, "waitForSuccessfulResponse")
+	ctx, spanWaitForSuccessfulResponse := s.tracer.Start(ctx, "waitForSuccessfulResponse")
 	// Wait for the first successful response or until all responses are processed
 	for i := 0; i < len(s.registrationClients); i++ {
 		select {
@@ -431,7 +435,7 @@ func (s *Service) StreamHeader(ctx context.Context, client *Client) (*relaygrpc.
 func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader, validatorID string) (any, *LogMetric, error) {
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
-	getHeaderctx, span := s.tracer.Start(ctx, "getHeader")
+	ctx, span := s.tracer.Start(ctx, "getHeader")
 	defer span.End()
 	startTime := time.Now().UTC()
 
@@ -485,16 +489,18 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 	span.SetAttributes(logMetric.attributes...)
 
-	_, storingHeaderSpan := s.tracer.Start(getHeaderctx, "storingHeader")
+	_, storingHeaderSpan := s.tracer.Start(ctx, "storingHeader")
 
 	//TODO: send fluentd stats for StatusNoContent error cases
 
 	if len(pubKey) != 98 {
+		storingHeaderSpan.End(trace.WithTimestamp(time.Now()))
 		logMetric.String("proxyError", fmt.Sprintf("pub key should be %d long", 98))
 		return nil, logMetric, toErrorResp(http.StatusNoContent, errInvalidPubkey.Error())
 	}
 
 	if len(parentHash) != 66 {
+		storingHeaderSpan.End(trace.WithTimestamp(time.Now()))
 		logMetric.String("proxyError", fmt.Sprintf("pub key should be %d long", 98))
 		return nil, logMetric, toErrorResp(http.StatusNoContent, errInvalidHash.Error())
 	}
@@ -575,7 +581,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		aKey = authHeader
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", s.authKey)
-	payloadCtx, span := s.tracer.Start(ctx, getPayload)
+	ctx, span := s.tracer.Start(ctx, getPayload)
 	defer span.End()
 
 	logMetric := NewLogMetric(
@@ -628,12 +634,12 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		respChan = make(chan *relaygrpc.GetPayloadResponse, len(s.clients))
 		_err     *ErrorResp
 	)
-	payloadResponseCtx, payloadResponseSpan := s.tracer.Start(payloadCtx, "payloadResponseFromRelay")
+	ctx, payloadResponseSpan := s.tracer.Start(ctx, "payloadResponseFromRelay")
 	for _, client := range s.clients {
-		go func(c *Client) {
-			_, clientGetPayloadSpan := s.tracer.Start(payloadResponseCtx, "getPayloadForClient")
+		go func(c *Client, _ctx context.Context) {
+			_ctx, clientGetPayloadSpan := s.tracer.Start(_ctx, "getPayloadForClient")
 			defer clientGetPayloadSpan.End()
-			clientCtx, cancel := context.WithTimeout(payloadResponseCtx, 3*time.Second)
+			clientCtx, cancel := context.WithTimeout(_ctx, 3*time.Second)
 			defer cancel()
 			out, err := c.GetPayload(clientCtx, req)
 			clientGetPayloadSpan.End(trace.WithTimestamp(time.Now()))
@@ -653,7 +659,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 				return
 			}
 			respChan <- out
-		}(client)
+		}(client, ctx)
 	}
 	// Wait for the first successful response or until all responses are processed
 	for i := 0; i < len(s.clients); i++ {

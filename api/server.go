@@ -123,8 +123,10 @@ func (s *Server) HandleStatus(w http.ResponseWriter, req *http.Request) {
 func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	parentSpan := trace.SpanFromContext(r.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(parentSpanCtx, "handleRegistration")
-	defer span.End()
+	handleRegistrationCtx, handleRegistrationSpan := s.tracer.Start(parentSpanCtx, "handleRegistration")
+	defer parentSpan.End()
+	defer handleRegistrationSpan.End()
+
 	receivedAt := time.Now().UTC()
 	parsedURL, err := ParseURL(r)
 	if err != nil {
@@ -144,7 +146,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 			zap.String("parsedURL", parsedURL.String()),
 			zap.String("validatorID", validatorID),
 			zap.String("authHeader", authHeader),
-			zap.String("traceID", span.SpanContext().TraceID().String()),
+			zap.String("traceID", handleRegistrationSpan.SpanContext().TraceID().String()),
 		},
 		[]attribute.KeyValue{
 			attribute.String("reqHost", r.Host),
@@ -154,34 +156,35 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 			attribute.String("remoteAddr", r.RemoteAddr),
 			attribute.String("requestURI", r.RequestURI),
 			attribute.String("authHeader", authHeader),
-			attribute.String("traceID", span.SpanContext().TraceID().String()),
+			attribute.String("traceID", handleRegistrationSpan.SpanContext().TraceID().String()),
 		},
 	)
-	span.SetAttributes(logMetric.attributes...)
+	handleRegistrationSpan.SetAttributes(logMetric.attributes...)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		handleRegistrationSpan.SetStatus(codes.Error, err.Error())
 		logMetric.String("proxyError", err.Error())
 		logMetric.Error(errors.New("could not read registration"))
-		respondError(registration, w, toErrorResp(http.StatusInternalServerError, "could not read registration"), s.logger, s.tracer, logMetric)
+		respondError(handleRegistrationCtx, registration, w, toErrorResp(http.StatusInternalServerError, "could not read registration"), s.logger, s.tracer, logMetric)
 		return
 	}
-
-	out, lm, err := s.svc.RegisterValidator(r.Context(), receivedAt, bodyBytes, clientIP, authHeader, validatorID)
+	handleRegistrationSpan.AddEvent("registerValidator")
+	out, lm, err := s.svc.RegisterValidator(handleRegistrationCtx, receivedAt, bodyBytes, clientIP, authHeader, validatorID)
 	logMetric.Merge(lm)
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		respondError(registration, w, err, s.logger, s.tracer, logMetric)
+		handleRegistrationSpan.SetStatus(codes.Error, err.Error())
+		respondError(handleRegistrationCtx, registration, w, err, s.logger, s.tracer, logMetric)
 		return
 	}
 
-	respondOK(registration, w, out, s.logger, s.tracer, logMetric)
+	respondOK(handleRegistrationCtx, registration, w, out, s.logger, s.tracer, logMetric)
 }
 
 func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 	parentSpan := trace.SpanFromContext(r.Context())
 	parentSpanCtx := trace.ContextWithSpan(context.Background(), parentSpan)
 	handleGetHeaderCtx, span := s.tracer.Start(parentSpanCtx, "handleGetHeader")
+	defer parentSpan.End()
 	defer span.End()
 
 	receivedAt := time.Now().UTC()
@@ -247,21 +250,22 @@ func (s *Server) HandleGetHeader(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Duration(sleep) * time.Millisecond)
 	}
 
-	_, handleGetHeaderSpan := s.tracer.Start(handleGetHeaderCtx, "server-getHeader")
-	out, lm, err := s.svc.GetHeader(r.Context(), receivedAt, clientIP, slot, parentHash, pubKey, authHeader, validatorID)
-	handleGetHeaderSpan.End()
+	span.AddEvent("getHeader")
+	//svcGetHeader, handleGetHeaderSpan := s.tracer.Start(handleGetHeaderCtx, "svcGetHeader")
+	out, lm, err := s.svc.GetHeader(handleGetHeaderCtx, receivedAt, clientIP, slot, parentHash, pubKey, authHeader, validatorID)
 	logMetric.Merge(lm)
 	if err != nil {
-		respondError(getHeader, w, err, s.logger, s.tracer, logMetric)
+		respondError(handleGetHeaderCtx, getHeader, w, err, s.logger, s.tracer, logMetric)
 		return
 	}
-	respondOK(getHeader, w, out, s.logger, s.tracer, logMetric)
+	respondOK(handleGetHeaderCtx, getHeader, w, out, s.logger, s.tracer, logMetric)
 }
 
 func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 	parentSpan := trace.SpanFromContext(r.Context())
-	ctx := trace.ContextWithSpan(context.Background(), parentSpan)
-	_, span := s.tracer.Start(ctx, "handleGetPayload")
+	parentCtx := trace.ContextWithSpan(context.Background(), parentSpan)
+	getPayloadCtx, span := s.tracer.Start(parentCtx, "handleGetPayload")
+	defer parentSpan.End()
 	defer span.End()
 
 	receivedAt := time.Now().UTC()
@@ -303,21 +307,21 @@ func (s *Server) HandleGetPayload(w http.ResponseWriter, r *http.Request) {
 		span.SetStatus(codes.Error, err.Error())
 		logMetric.String("proxyError", err.Error())
 		logMetric.Error(errors.New("could not read registration"))
-		respondError(getPayload, w, toErrorResp(http.StatusInternalServerError, "could not read registration"), s.logger, s.tracer, logMetric)
+		respondError(getPayloadCtx, getPayload, w, toErrorResp(http.StatusInternalServerError, "could not read registration"), s.logger, s.tracer, logMetric)
 		return
 	}
 	span.AddEvent("getPayload")
-	out, lm, err := s.svc.GetPayload(r.Context(), receivedAt, bodyBytes, clientIP, authHeader, validatorID)
+	out, lm, err := s.svc.GetPayload(getPayloadCtx, receivedAt, bodyBytes, clientIP, authHeader, validatorID)
 	logMetric.Merge(lm)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
-		respondError(getPayload, w, err, s.logger, s.tracer, logMetric)
+		respondError(getPayloadCtx, getPayload, w, err, s.logger, s.tracer, logMetric)
 		return
 	}
-	respondOK(getPayload, w, out, s.logger, s.tracer, logMetric)
+	respondOK(getPayloadCtx, getPayload, w, out, s.logger, s.tracer, logMetric)
 }
-func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logger, tracer trace.Tracer, logMetric *LogMetric) {
-	_, span := tracer.Start(context.Background(), "respondOK-main")
+func respondOK(ctx context.Context, method string, w http.ResponseWriter, response any, log *zap.Logger, tracer trace.Tracer, logMetric *LogMetric) {
+	_, span := tracer.Start(ctx, "respondOK-main")
 	defer span.End()
 	logMetric.Attributes(
 		attribute.String("method", method),
@@ -340,9 +344,9 @@ func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logg
 
 }
 
-func respondError(method string, w http.ResponseWriter, err error, log *zap.Logger, tracer trace.Tracer, logMetric *LogMetric) {
+func respondError(ctx context.Context, method string, w http.ResponseWriter, err error, log *zap.Logger, tracer trace.Tracer, logMetric *LogMetric) {
 
-	_, span := tracer.Start(context.Background(), "respondError-main")
+	_, span := tracer.Start(ctx, "respondError-main")
 	defer span.End()
 	logMetric.Attributes(
 		attribute.String("method", method),
