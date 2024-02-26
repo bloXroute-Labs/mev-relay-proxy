@@ -508,7 +508,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	if slotBestHeader == nil || err != nil {
 		msg := fmt.Sprintf("header value is not present for the requested key %v", keyForCachingBids)
 		span.AddEvent("Header value is not present", trace.WithAttributes(attribute.String("msg", msg)))
-		headerStats := getHeaderStatsRecord{
+		headerStats := GetHeaderStatsRecord{
 			RequestReceivedAt:        receivedAt,
 			FetchGetHeaderStartTime:  fetchGetHeaderStartTime.String(),
 			FetchGetHeaderDurationMS: fetchGetHeaderDurationMS,
@@ -528,12 +528,12 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 		}
 		s.statsRecordCh <- StatsRecord{
 			Record: fluentstats.Record{
-				Type: typeRelayProxyGetHeader,
+				Type: TypeRelayProxyGetHeader,
 				Data: headerStats,
 			},
 			Timestamp: time.Now().UTC(),
 			NodeID:    s.NodeID(),
-			Type:      statsRelayProxyGetHeader,
+			Type:      StatsRelayProxyGetHeader,
 		}
 
 		logMetric.String("proxyError", msg)
@@ -541,7 +541,7 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	}
 	storingHeaderSpan.End(trace.WithTimestamp(time.Now()))
 
-	headerStats := getHeaderStatsRecord{
+	headerStats := GetHeaderStatsRecord{
 		RequestReceivedAt:        receivedAt,
 		FetchGetHeaderStartTime:  fetchGetHeaderStartTime.String(),
 		FetchGetHeaderDurationMS: fetchGetHeaderDurationMS,
@@ -562,12 +562,12 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 
 	s.statsRecordCh <- StatsRecord{
 		Record: fluentstats.Record{
-			Type: typeRelayProxyGetHeader,
+			Type: TypeRelayProxyGetHeader,
 			Data: headerStats,
 		},
 		Timestamp: time.Now().UTC(),
 		NodeID:    s.NodeID(),
-		Type:      statsRelayProxyGetHeader,
+		Type:      StatsRelayProxyGetHeader,
 	}
 
 	return json.RawMessage(slotBestHeader.Payload), logMetric, nil
@@ -699,7 +699,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 					}
 				}
 
-				payloadStat := getPayloadStatsRecord{
+				payloadStat := GetPayloadStatsRecord{
 					RequestReceivedAt: receivedAt,
 					Duration:          time.Since(startTime),
 					SlotStartTime:     slotStartTime,
@@ -717,12 +717,12 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 				}
 				s.statsRecordCh <- StatsRecord{
 					Record: fluentstats.Record{
-						Type: typeRelayProxyGetPayload,
+						Type: TypeRelayProxyGetPayload,
 						Data: payloadStat,
 					},
 					Timestamp: time.Now().UTC(),
 					NodeID:    s.NodeID(),
-					Type:      statsRelayProxyGetPayload,
+					Type:      StatsRelayProxyGetPayload,
 				}
 			}()
 			logMetric.Error(ctx.Err())
@@ -733,7 +733,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 		case out := <-respChan:
 			slotStartTime := GetSlotStartTime(s.beaconGenesisTime, int64(out.GetSlot()))
 			msIntoSlot := time.Since(slotStartTime).Milliseconds()
-			payloadStats := getPayloadStatsRecord{
+			payloadStats := GetPayloadStatsRecord{
 				RequestReceivedAt: receivedAt,
 				Duration:          time.Since(startTime),
 				SlotStartTime:     slotStartTime,
@@ -751,12 +751,12 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			}
 			s.statsRecordCh <- StatsRecord{
 				Record: fluentstats.Record{
-					Type: typeRelayProxyGetPayload,
+					Type: TypeRelayProxyGetPayload,
 					Data: payloadStats,
 				},
 				Timestamp: time.Now().UTC(),
 				NodeID:    s.NodeID(),
-				Type:      statsRelayProxyGetPayload,
+				Type:      StatsRelayProxyGetPayload,
 			}
 			logMetric.Fields([]zap.Field{
 				zap.Duration("duration", time.Since(startTime)),

@@ -6,15 +6,14 @@ import (
 )
 
 const (
-	statsRelayProxyGetHeader       = "relay-proxy-getHeader"
-	statsRelayProxyBidCancellation = "relay-proxy-bid-cancellation"
-	statsRelayProxyGetPayload      = "relay-proxy-getPayload"
+	StatsRelayProxyGetHeader  = "relay-proxy-getHeader"
+	StatsRelayProxyGetPayload = "relay-proxy-getPayload"
 
-	typeRelayProxyGetHeader  = "relay_proxy_provided_header"
-	typeRelayProxyGetPayload = "relay_proxy_provided_payload"
+	TypeRelayProxyGetHeader  = "relay_proxy_provided_header"
+	TypeRelayProxyGetPayload = "relay_proxy_provided_payload"
 )
 
-type getHeaderStatsRecord struct {
+type GetHeaderStatsRecord struct {
 	RequestReceivedAt        time.Time     `json:"request_received_at"`
 	FetchGetHeaderStartTime  string        `json:"fetch_get_header_start_time"`
 	FetchGetHeaderDurationMS int64         `json:"fetch_get_header_duration_ms"`
@@ -33,7 +32,7 @@ type getHeaderStatsRecord struct {
 	ValidatorID              string        `json:"validator_id"`
 }
 
-type getPayloadStatsRecord struct {
+type GetPayloadStatsRecord struct {
 	RequestReceivedAt time.Time     `json:"request_received_at"`
 	Duration          time.Duration `json:"duration"`
 	SlotStartTime     time.Time     `json:"slot_start_time"`
