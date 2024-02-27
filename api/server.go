@@ -148,30 +148,43 @@ func respondOK(method string, w http.ResponseWriter, response any, log *zap.Logg
 }
 
 func respondError(method string, w http.ResponseWriter, err error, log *zap.Logger, metaData any) {
-	resp := err.(*ErrorResp)
+
 	var meta string
 	if metaData != nil {
 		meta = metaData.(string)
 	}
+	resp, ok := err.(*ErrorResp)
+	if !ok {
+		log.With(zap.String("req_id", resp.BlxrMessage.reqID),
+			zap.String("client_ip", resp.BlxrMessage.clientIP),
+			zap.String("blxr_message", resp.BlxrMessage.msg),
+			zap.String("relay_message", resp.BlxrMessage.relayMsg),
+			zap.String("proxy_message", resp.BlxrMessage.proxyMsg),
+			zap.String("resp_message", resp.Message),
+			zap.Int("resp_code", resp.Code)).Error("failed to typecast error response", zap.String("metaData", meta))
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(resp.Code)
-
-	log.With(
-		zap.String("req_id", resp.BlxrMessage.reqID),
-		zap.String("blxr_message", resp.BlxrMessage.msg),
+	log.With(zap.String("req_id", resp.BlxrMessage.reqID),
 		zap.String("client_ip", resp.BlxrMessage.clientIP),
-		zap.Int("resp_code", resp.Code),
-	).Error(fmt.Sprintf("%s failed", method), zap.String("metaData", meta))
-
-	if resp.Message != "" {
+		zap.String("blxr_message", resp.BlxrMessage.msg),
+		zap.String("relay_message", resp.BlxrMessage.relayMsg),
+		zap.String("proxy_message", resp.BlxrMessage.proxyMsg),
+		zap.String("resp_message", resp.Message),
+		zap.Int("resp_code", resp.Code)).Error(fmt.Sprintf("%s failed", method), zap.String("metaData", meta))
+	if resp.Message != "" && resp.Code != http.StatusNoContent { // HTTP status "No Content" implies that no message body should be included in the response.
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			log.With(
-				zap.String("req_id", resp.BlxrMessage.reqID),
+			log.With(zap.String("req_id", resp.BlxrMessage.reqID),
 				zap.String("blxr_message", resp.BlxrMessage.msg),
-				zap.String("message", resp.Message),
 				zap.String("client_ip", resp.BlxrMessage.clientIP),
-				zap.Int("resp_code", resp.Code),
-			).Error("couldn't write error response", zap.Error(err), zap.String("metaData", meta))
-			http.Error(w, "", http.StatusInternalServerError)
+				zap.String("relay_message", resp.BlxrMessage.relayMsg),
+				zap.String("proxy_message", resp.BlxrMessage.proxyMsg),
+				zap.String("resp_message", resp.Message),
+				zap.Int("resp_code", resp.Code)).Error("couldn't write error response", zap.Error(err), zap.String("metaData", meta))
+			_, _ = w.Write([]byte(``))
+			return
 		}
 	}
 }
