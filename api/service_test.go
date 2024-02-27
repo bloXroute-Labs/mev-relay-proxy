@@ -146,7 +146,7 @@ func TestService_GetHeader(t *testing.T) {
 				tracer:  noop.NewTracerProvider().Tracer("test"),
 				fluentD: fluentstats.NewStats(true, "0.0.0.0:24224"),
 			}
-			_, _, err := s.GetHeader(context.Background(), time.Now(), "ip", tt.slot, tt.parentHash, tt.pubKey, "", "")
+			_, _, err := s.GetHeader(context.Background(), time.Now(), "ip", tt.slot, tt.parentHash, tt.pubKey, "YmY1YzVkMWItNzAzMC00ZjA1LTlhYzMtMjE3MDk1ZTlkMmI2OjFmNGIwZjU5ZGYwNDM1MWQ2ZWRkOGUxYjU2ZTk3MTNh", "")
 			assert.Equal(t, err.Error(), tt.wantErr.Error())
 		})
 	}

@@ -118,13 +118,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 
 	parentSpan := trace.SpanFromContext(ctx)
 	ctx = trace.ContextWithSpan(context.Background(), parentSpan)
-	// use internal auth header if auth header is not provided
-	aKey := s.authKey
-	isAuthHeaderProvided := authHeader != ""
-	if isAuthHeaderProvided {
-		aKey = authHeader
-	}
-	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", aKey)
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", authHeader)
 	ctx, span := s.tracer.Start(ctx, "registerValidator")
 	defer span.End()
 
@@ -138,8 +132,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			zap.Time("receivedAt", receivedAt),
 			zap.String("validatorID", validatorID),
 			zap.String("secretToken", s.secretToken),
-			zap.String("authHeader", aKey),
-			zap.Bool("isAuthHeaderProvided", isAuthHeaderProvided),
+			zap.String("authHeader", authHeader),
 		},
 		[]attribute.KeyValue{
 			attribute.String("method", "registerValidator"),
@@ -148,8 +141,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			attribute.String("validatorID", validatorID),
 			attribute.String("traceID", parentSpan.SpanContext().TraceID().String()),
 			attribute.Int64("receivedAt", receivedAt.Unix()),
-			attribute.String("authHeader", aKey),
-			attribute.Bool("isAuthHeaderProvided", isAuthHeaderProvided),
+			attribute.String("authHeader", authHeader),
 		},
 	)
 	s.logger.Info("received", logMetric.fields...)
@@ -160,8 +152,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 	if err != nil {
 		logMetric.String("proxyError", fmt.Sprintf("failed to decode auth header %s", authHeader))
 		logMetric.Error(err)
-		s.logger.Warn("failed to decode auth header", logMetric.fields...)
-		//zap.Error(err), 		return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
+		return nil, logMetric, toErrorResp(http.StatusUnauthorized, err.Error(), logMetric.fields...)
 	}
 	decodeAuthSpan.End(trace.WithTimestamp(time.Now()))
 
@@ -187,7 +178,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 				Version:     s.version,
 				NodeId:      c.nodeID,
 				ReceivedAt:  timestamppb.New(receivedAt),
-				AuthHeader:  aKey,
+				AuthHeader:  authHeader,
 				SecretToken: s.secretToken,
 			}
 			out, err := selectedRelay.RegisterValidator(clientCtx, req)
@@ -224,7 +215,7 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 		case <-ctx.Done():
 			logMetric.Error(ctx.Err())
 			logMetric.String("relayError", "failed to register")
-			return nil, nil, toErrorResp(http.StatusInternalServerError, ctx.Err().Error(), logMetric.fields...)
+			return nil, logMetric, toErrorResp(http.StatusInternalServerError, ctx.Err().Error(), logMetric.fields...)
 		case _err = <-errChan:
 			// if multiple client return errors, first error gets replaced by the subsequent errors
 		case <-respChan:
@@ -471,8 +462,8 @@ func (s *Service) GetHeader(ctx context.Context, receivedAt time.Time, clientIP,
 	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
 		logMetric.String("proxyError", fmt.Sprintf("failed to decode auth header %s", authHeader))
-		s.logger.Warn("failed to decode auth header", zap.Error(err), zap.String("authHeader", authHeader), zap.String("reqID", id), zap.String("clientIP", clientIP))
-		//return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
+		logMetric.Error(err)
+		return nil, logMetric, toErrorResp(http.StatusUnauthorized, err.Error(), logMetric.fields...)
 	}
 	logMetric.String("accountID", accountID)
 	_slot, err := strconv.ParseUint(slot, 10, 64)
@@ -613,8 +604,8 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	accountID, _, err := DecodeAuth(authHeader)
 	if err != nil {
 		logMetric.String("proxyError", fmt.Sprintf("failed to decode auth header %s", authHeader))
-		s.logger.Warn("failed to decode auth header", zap.Error(err), zap.String("authHeader", authHeader), zap.String("reqID", id), zap.String("clientIP", clientIP))
-		//return nil, nil, toErrorResp(http.StatusUnauthorized, "", fmt.Sprintf("failed to decode auth header: %v", authHeader), id, "invalid auth header", clientIP)
+		logMetric.Error(err)
+		return nil, logMetric, toErrorResp(http.StatusUnauthorized, err.Error(), logMetric.fields...)
 	}
 
 	logMetric.String("accountID", accountID)
@@ -718,7 +709,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 			}()
 			logMetric.Error(ctx.Err())
 			logMetric.String("relayError", "failed to getPayload")
-			return nil, nil, toErrorResp(http.StatusInternalServerError, ctx.Err().Error(), zap.String("relayError", "failed to getPayload"))
+			return nil, logMetric, toErrorResp(http.StatusInternalServerError, ctx.Err().Error(), zap.String("relayError", "failed to getPayload"))
 		case _err = <-errChan:
 			// if multiple client return errors, first error gets replaced by the subsequent errors
 		case out := <-respChan:
@@ -760,7 +751,7 @@ func (s *Service) GetPayload(ctx context.Context, receivedAt time.Time, payload 
 	payloadResponseSpan.End(trace.WithTimestamp(time.Now()))
 	logMetric.Error(errors.New(_err.Message))
 	logMetric.Fields(_err.fields...)
-	return nil, nil, _err
+	return nil, logMetric, _err
 }
 
 func (s *Service) keyForCachingBids(slot uint64, parentHash string, proposerPubkey string) string {

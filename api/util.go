@@ -49,6 +49,10 @@ func GetAuth(r *http.Request, parsedURL *url.URL) string {
 }
 
 func DecodeAuth(in string) (string, string, error) {
+	if in == "" {
+		return "", "", fmt.Errorf("empty auth header")
+	}
+
 	decodedBytes, err := base64.StdEncoding.DecodeString(in)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to decode auth header")
