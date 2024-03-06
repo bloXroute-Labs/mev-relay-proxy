@@ -50,7 +50,7 @@ var (
 )
 
 type IService interface {
-	RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error)
+	RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID, complianceList string) (any, *LogMetric, error)
 	GetHeader(ctx context.Context, receivedAt time.Time, clientIP, slot, parentHash, pubKey, authHeader, validatorID string) (any, *LogMetric, error)
 	GetPayload(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error)
 	NodeID() string
@@ -109,7 +109,7 @@ func NewService(logger *zap.Logger, tracer trace.Tracer, version string, secretT
 	}
 }
 
-func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error) {
+func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID, complianceList string) (any, *LogMetric, error) {
 	var (
 		errChan  = make(chan *ErrorResp, len(s.clients))
 		respChan = make(chan *relaygrpc.RegisterValidatorResponse, len(s.clients))
@@ -172,14 +172,15 @@ func (s *Service) RegisterValidator(ctx context.Context, receivedAt time.Time, p
 			s.registrationRelayMutex.Unlock()
 
 			req := &relaygrpc.RegisterValidatorRequest{
-				ReqId:       id,
-				Payload:     payload,
-				ClientIp:    clientIP,
-				Version:     s.version,
-				NodeId:      c.nodeID,
-				ReceivedAt:  timestamppb.New(receivedAt),
-				AuthHeader:  authHeader,
-				SecretToken: s.secretToken,
+				ReqId:          id,
+				Payload:        payload,
+				ClientIp:       clientIP,
+				Version:        s.version,
+				NodeId:         c.nodeID,
+				ReceivedAt:     timestamppb.New(receivedAt),
+				AuthHeader:     authHeader,
+				SecretToken:    s.secretToken,
+				ComplianceList: complianceList,
 			}
 			out, err := selectedRelay.RegisterValidator(clientCtx, req)
 			regSpan.AddEvent("registerValidator", trace.WithAttributes(attribute.String("url", c.URL)))

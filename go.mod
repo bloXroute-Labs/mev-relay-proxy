@@ -6,7 +6,7 @@ require (
 	github.com/attestantio/go-builder-client v0.4.2
 	github.com/attestantio/go-eth2-client v0.19.9
 	github.com/bloXroute-Labs/gateway/v2 v2.127.75-0.20231129102830-ab252898d3c3
-	github.com/bloXroute-Labs/relay-grpc v0.0.15
+	github.com/bloXroute-Labs/relay-grpc v0.0.20
 	github.com/ethereum/go-ethereum v1.13.10
 	github.com/fluent/fluent-logger-golang v1.9.0
 	github.com/go-chi/chi/v5 v5.0.10

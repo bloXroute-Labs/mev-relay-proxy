@@ -136,6 +136,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 	clientIP := GetIPXForwardedFor(r)
 	authHeader := GetAuth(r, parsedURL)
 	validatorID := parsedURL.Query().Get("id")
+	complianceList := parsedURL.Query().Get("compliance_list")
 	logMetric := NewLogMetric(
 		[]zap.Field{
 			zap.String("reqHost", r.Host),
@@ -145,6 +146,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 			zap.String("requestURI", r.RequestURI),
 			zap.String("parsedURL", parsedURL.String()),
 			zap.String("validatorID", validatorID),
+			zap.String("complianceList", complianceList),
 			zap.String("authHeader", authHeader),
 			zap.String("traceID", handleRegistrationSpan.SpanContext().TraceID().String()),
 		},
@@ -152,6 +154,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 			attribute.String("reqHost", r.Host),
 			attribute.String("method", r.Method),
 			attribute.String("validatorID", validatorID),
+			attribute.String("complianceList", complianceList),
 			attribute.String("clientIP", clientIP),
 			attribute.String("remoteAddr", r.RemoteAddr),
 			attribute.String("requestURI", r.RequestURI),
@@ -169,7 +172,7 @@ func (s *Server) HandleRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handleRegistrationSpan.AddEvent("registerValidator")
-	out, lm, err := s.svc.RegisterValidator(handleRegistrationCtx, receivedAt, bodyBytes, clientIP, authHeader, validatorID)
+	out, lm, err := s.svc.RegisterValidator(handleRegistrationCtx, receivedAt, bodyBytes, clientIP, authHeader, validatorID, complianceList)
 	logMetric.Merge(lm)
 	if err != nil {
 		handleRegistrationSpan.SetStatus(codes.Error, err.Error())

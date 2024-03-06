@@ -95,7 +95,7 @@ func TestService_RegisterValidator(t *testing.T) {
 				tracer:              noop.NewTracerProvider().Tracer("test"),
 				fluentD:             fluentstats.NewStats(true, "0.0.0.0:24224"),
 			}
-			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", TestAuthHeader, "")
+			got, _, err := s.RegisterValidator(context.Background(), time.Now(), nil, "", TestAuthHeader, "", "")
 			if err == nil {
 				assert.Equal(t, got, tt.wantSuccess)
 				return
@@ -633,6 +633,16 @@ type mockRelayClient struct {
 	RegisterValidatorFunc func(ctx context.Context, req *relaygrpc.RegisterValidatorRequest, opts ...grpc.CallOption) (*relaygrpc.RegisterValidatorResponse, error)
 	GetPayloadFunc        func(ctx context.Context, req *relaygrpc.GetPayloadRequest, opts ...grpc.CallOption) (*relaygrpc.GetPayloadResponse, error)
 	StreamHeaderFunc      func(ctx context.Context, in *relaygrpc.StreamHeaderRequest, opts ...grpc.CallOption) (relaygrpc.Relay_StreamHeaderClient, error)
+}
+
+func (m *mockRelayClient) GetValidatorRegistration(ctx context.Context, in *relaygrpc.GetValidatorRegistrationRequest, opts ...grpc.CallOption) (*relaygrpc.GetValidatorRegistrationResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (m *mockRelayClient) PreFetchGetPayload(ctx context.Context, in *relaygrpc.PreFetchGetPayloadRequest, opts ...grpc.CallOption) (*relaygrpc.PreFetchGetPayloadResponse, error) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (m *mockRelayClient) SubmitBlock(ctx context.Context, in *relaygrpc.SubmitBlockRequest, opts ...grpc.CallOption) (*relaygrpc.SubmitBlockResponse, error) {

@@ -26,7 +26,7 @@ type MockService struct {
 
 var _ IService = (*MockService)(nil)
 
-func (m *MockService) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID string) (any, *LogMetric, error) {
+func (m *MockService) RegisterValidator(ctx context.Context, receivedAt time.Time, payload []byte, clientIP, authHeader, validatorID, complianceList string) (any, *LogMetric, error) {
 	if m.RegisterValidatorFunc != nil {
 		return m.RegisterValidatorFunc(ctx, payload, clientIP, authHeader, validatorID)
 	}
