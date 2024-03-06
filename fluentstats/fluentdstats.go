@@ -25,7 +25,7 @@ type LogRecord struct {
 	Level     string `json:"level"`
 	Name      string `json:"name"`
 	Msg       Record `json:"msg"`
-	NodeID    string `json:"node_id"`
+	Instance  string `json:"instance"`
 	Timestamp string `json:"timestamp"`
 }
 
@@ -63,7 +63,7 @@ func (s FluentdStats) LogToFluentD(record Record, ts time.Time, nodeID string, l
 		Level:     "STATS",
 		Name:      logName,
 		Msg:       record,
-		NodeID:    nodeID,
+		Instance:  nodeID,
 		Timestamp: ts.Format(DateFormat),
 	}
 
