@@ -29,9 +29,10 @@ const (
 	AuthHeaderPrefix = "bearer "
 
 	// methods
-	getHeader    = "getHeader"
-	getPayload   = "getPayload"
-	registration = "registration"
+	getHeader       = "getHeader"
+	getPayload      = "getPayload"
+	preFetchPayload = "preFetchPayload"
+	registration    = "registration"
 )
 
 type Server struct {
