@@ -708,31 +708,34 @@ func (s *Service) validateGetPayload(ctx context.Context, logMetric *LogMetric, 
 		logMetric.String("proxyError", "block_hash not present")
 		return nil, toErrorResp(http.StatusBadRequest, "invalid input", logMetric.fields...)
 	}
-	defer readPayload.End(trace.WithTimestamp(time.Now()))
+	readPayload.End(trace.WithTimestamp(time.Now()))
 
 	_, decodeJSONSpan := s.tracer.Start(ctx, "decodeJSON")
 	signedBlindedBeaconBlock, err := fastjson.UnmarshalToSignedBlindedBeaconBlock(bodyString)
 	if err != nil {
-		defer decodeJSONSpan.End(trace.WithTimestamp(time.Now()))
+		decodeJSONSpan.End(trace.WithTimestamp(time.Now()))
 		logMetric.String("proxyError", "failed to decode request payload")
 		return nil, toErrorResp(http.StatusBadRequest, err.Error(), logMetric.fields...)
 	}
-	defer decodeJSONSpan.End(trace.WithTimestamp(time.Now()))
+	decodeJSONSpan.End(trace.WithTimestamp(time.Now()))
 
 	logMetric.String("blockVersion", signedBlindedBeaconBlock.Version.String())
 	slot, err := signedBlindedBeaconBlock.Slot()
 	if err != nil {
+		logMetric.String("proxyError", "failed to decode slot")
 		return nil, toErrorResp(http.StatusBadRequest, "failed to get slot", logMetric.fields...)
 	}
 
 	blockHash, err := signedBlindedBeaconBlock.ExecutionBlockHash()
 	if err != nil {
+		logMetric.String("proxyError", "failed to decode block hash")
 		return nil, toErrorResp(http.StatusBadRequest, "failed to get block hash", logMetric.fields...)
 	}
 	blockHashString := blockHash.String()
 
 	parentHash, err := signedBlindedBeaconBlock.ExecutionParentHash()
 	if err != nil {
+		logMetric.String("proxyError", "failed to decode parent hash")
 		return nil, toErrorResp(http.StatusBadRequest, "failed to get parent hash", logMetric.fields...)
 	}
 
@@ -760,14 +763,15 @@ func (s *Service) validateGetPayload(ctx context.Context, logMetric *LogMetric, 
 			logMetric.Attributes(attribute.KeyValue{Key: "sleepingFor", Value: attribute.Int64Value(delayMillis)})
 		}
 	} else if getPayloadRequestCutoffMs > 0 && msIntoSlot > int64(getPayloadRequestCutoffMs) {
-		defer checkRequestTimingSpan.End(trace.WithTimestamp(time.Now()))
+		checkRequestTimingSpan.End(trace.WithTimestamp(time.Now()))
 		return nil, toErrorResp(http.StatusBadRequest, "timestamp too late", logMetric.fields...)
 	}
-	defer checkRequestTimingSpan.End(trace.WithTimestamp(time.Now()))
+	checkRequestTimingSpan.End(trace.WithTimestamp(time.Now()))
 
 	_, checkValidatorKnownSpan := s.tracer.Start(ctx, "checkValidatorKnown")
 	proposerKey, ok := s.executionPayloadForSlot.Get(fmt.Sprintf("%d", uint64(slot)))
 	if !ok {
+		logMetric.String("proxyError", fmt.Sprintf("slot %v not found in memory", slot))
 		return nil, toErrorResp(http.StatusBadRequest, fmt.Sprintf("slot %v not found in memory", slot), logMetric.fields...)
 	}
 	pubKey, ok := proposerKey.(string)
@@ -776,24 +780,26 @@ func (s *Service) validateGetPayload(ctx context.Context, logMetric *LogMetric, 
 	}
 	pub, err := utils.HexToPubkey(pubKey)
 	if err != nil {
-		defer checkValidatorKnownSpan.End(trace.WithTimestamp(time.Now()))
+		checkValidatorKnownSpan.End(trace.WithTimestamp(time.Now()))
+		logMetric.String("proxyError", "invalid public key")
 		return nil, toErrorResp(http.StatusBadRequest, "invalid public key", logMetric.fields...)
 	}
 
-	defer checkValidatorKnownSpan.End(trace.WithTimestamp(time.Now()))
+	checkValidatorKnownSpan.End(trace.WithTimestamp(time.Now()))
 	logMetric.String("pubKey", pub.String())
 
 	_, verifySignatureSpan := s.tracer.Start(ctx, "verifySignature")
 	// verify the signature
 	ok, err = fastjson.CheckProposerSignature(s.ethNetworkDetails, signedBlindedBeaconBlock, pub[:])
 	if !ok || err != nil {
-		defer verifySignatureSpan.End(trace.WithTimestamp(time.Now()))
+		verifySignatureSpan.End(trace.WithTimestamp(time.Now()))
 		if err != nil {
 			logMetric.Error(err)
 		}
+		logMetric.String("proxyError", "invalid signature")
 		return nil, toErrorResp(http.StatusBadRequest, "invalid signature", logMetric.fields...)
 	}
-	defer verifySignatureSpan.End(trace.WithTimestamp(time.Now()))
+	verifySignatureSpan.End(trace.WithTimestamp(time.Now()))
 	return &VersionedPayloadInfo{
 		Payload:    signedBlindedBeaconBlock,
 		Slot:       uint64(slot),
